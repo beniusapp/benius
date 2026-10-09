@@ -61,9 +61,23 @@ interface AggStudent {
   ledger: LedgerDecision | null;
 }
 
+interface PromotionOverrideAudit {
+  reason: string;
+  actorId: number;
+  actorRole: "admin" | "support_staff";
+  createdAt: string;
+}
+
 interface AggData {
   students: AggStudent[];
-  overrides: { studentId: number; overrideStatus: string; nextClass: string; nextSection: string }[];
+  overrides: {
+    studentId: number;
+    overrideStatus: string;
+    nextClass: string;
+    nextSection: string;
+    audit: PromotionOverrideAudit | null;
+    isProposal: boolean;
+  }[];
   overrideSessionIsolation?: "SESSION_AWARE" | "SCHEMA_MIGRATION_REQUIRED";
   missingSubjects: string[];
   passThreshold: number;
@@ -77,7 +91,23 @@ interface AcademicSessionOption {
 }
 
 type AdminDecision = "promote" | "retain" | "grace_pass";
-interface AdminOverride { status: AdminDecision; nextClass: string; nextSection: string; }
+interface AdminOverride {
+  status: AdminDecision;
+  nextClass: string;
+  nextSection: string;
+  rawStatus: string;
+  audit: PromotionOverrideAudit | null;
+  isProposal: boolean;
+}
+type OverrideSaveItem = {
+  studentId: number;
+  dec: "promote" | "retain";
+  nextClass: string;
+  nextSection: string;
+};
+type OverrideReasonAction =
+  | { kind: "save"; items: OverrideSaveItem[]; bulk: boolean }
+  | { kind: "clear"; studentId: number };
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -95,6 +125,16 @@ function fmt(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function formatOverrideAuditTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Recorded time unavailable";
+  return `${new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(date)} IST`;
 }
 
 function nxtCls(cls: string, classList: string[]): string {
@@ -203,6 +243,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [selectedStudents,  setSelectedStudents]  = useState<Set<number>>(new Set());
   const [savingStudents,    setSavingStudents]    = useState<Set<number>>(new Set());
   const [showResetConfirm, setShowResetConfirm]  = useState(false);
+  const [overrideReasonAction, setOverrideReasonAction] = useState<OverrideReasonAction | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideReasonError, setOverrideReasonError] = useState("");
+  const [resetAllReason, setResetAllReason] = useState("");
+  const [resetAllReasonError, setResetAllReasonError] = useState("");
   // Snapshot of which students are targeted for Step 3 execution.
   // null = entire cohort; non-null Set = only those IDs.
   const [executionScope, setExecutionScope]      = useState<Set<number> | null>(null);
@@ -293,6 +338,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     refetchOnWindowFocus: true,
   });
   const overridesAvailable = !!agg && agg.overrideSessionIsolation === "SESSION_AWARE";
+  const hasExecutedOverrides = !!agg && !!cohort && agg.overrides.some(override =>
+    override.isProposal && cohort.executedStudentIds.includes(override.studentId),
+  );
+  const hasProposedOverrides = Object.values(overrides).some(override => override.isProposal);
 
   // ── Filtered student list (client-side, AND logic) ────────────────────────
   const filteredStudents = useMemo(() => {
@@ -320,25 +369,27 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [agg, filterText, filterPctOp, filterPctVal, filterDecision]);
   const hasFilters = filterText !== "" || filterPctVal !== "" || filterDecision !== "all";
 
-  // Seed overrides from DB when agg loads (only if local state is still empty)
+  // Seed overrides from the selected-session API response. The raw value is kept
+  // so legacy outcomes remain visible without presenting them as new choices.
   useEffect(() => {
     if (agg?.overrideSessionIsolation !== "SESSION_AWARE") {
       setOverrides({});
       return;
     }
-    if (!agg?.overrides || agg.overrides.length === 0) return;
-    setOverrides(prev => {
-      if (Object.keys(prev).length > 0) return prev;
-      const seed: Record<number, AdminOverride> = {};
-      for (const ov of agg.overrides) {
-        seed[ov.studentId] = {
-          status: ov.overrideStatus === "PASS" ? "promote" : ov.overrideStatus === "GRACE_PASS" ? "grace_pass" : "retain",
-          nextClass: ov.nextClass,
-          nextSection: ov.nextSection,
-        };
-      }
-      return seed;
-    });
+    const seed: Record<number, AdminOverride> = {};
+    for (const ov of agg?.overrides ?? []) {
+      seed[ov.studentId] = {
+        status: ov.overrideStatus === "PROMOTE" || ov.overrideStatus === "PASS"
+          ? "promote"
+          : ov.overrideStatus === "GRACE_PASS" ? "grace_pass" : "retain",
+        nextClass: ov.nextClass,
+        nextSection: ov.nextSection,
+        rawStatus: ov.overrideStatus,
+        audit: ov.audit ?? null,
+        isProposal: ov.isProposal,
+      };
+    }
+    setOverrides(seed);
   }, [agg]);
 
   // ── Delete term mutation ──────────────────────────────────────────────────
@@ -379,27 +430,35 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     onError: (e: Error) => { toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
   });
 
-  // ── Instant per-student override save / clear ─────────────────────────────
-  const DEC_TO_STATUS: Record<AdminDecision, string> = { promote: "PASS", retain: "REPEAT", grace_pass: "GRACE_PASS" };
+  // ── Principal override writes are audited and remain separate from execution ─
+  const OVERRIDE_TO_STATUS: Record<"promote" | "retain", "PROMOTE" | "RETAIN"> = {
+    promote: "PROMOTE",
+    retain: "RETAIN",
+  };
 
   const overrideSaveMut = useMutation({
-    mutationFn: async ({ studentId, dec, s }: { studentId: number; dec: AdminDecision; s: AggStudent }) => {
+    mutationFn: async ({ studentId, dec, nextClass, nextSection, reason }: OverrideSaveItem & { reason: string }) => {
       if (!cohort) throw new Error("No cohort");
-      const led = s.ledger;
-      const nc = dec === "retain" ? cohort.class   : (led?.targetClass    || nxtCls(cohort.class,   schoolClasses));
-      const ns = dec === "retain" ? cohort.section : (led?.targetSection  || cohort.section);
       const res = await apiRequestForViewSession("POST", "/api/admin/exam/override", {
-          studentId, examType,
-          class: cohort.class, section: cohort.section,
-          overrideStatus: DEC_TO_STATUS[dec],
-          nextClass: nc, nextSection: ns,
-        }, requireSelectedSessionId());
+        studentId,
+        examType,
+        class: cohort.class,
+        section: cohort.section,
+        overrideStatus: OVERRIDE_TO_STATUS[dec],
+        nextClass,
+        nextSection,
+        reason,
+      }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
       return res.json();
     },
     onSuccess: (_, { studentId, dec }) => {
       setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
-      toast({ title: "Override saved", description: `Student marked for ${dec === "promote" ? "promotion" : dec === "grace_pass" ? "grace pass" : "retention"}.`, duration: 2000 });
+      toast({
+        title: "Override saved — NOT YET EXECUTED",
+        description: `Saved ${dec === "promote" ? "Promote" : "Retain"} separately from the Teacher recommendation.`,
+        duration: 2500,
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
     },
     onError: (e: Error, { studentId }) => {
@@ -408,36 +467,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
   });
 
-  // ── Destination class/section patch (dropdown saves) ─────────────────────
-  const destSaveMut = useMutation({
-    mutationFn: async ({ studentId, status, nextClass, nextSection }: {
-      studentId: number; status: AdminDecision; nextClass: string; nextSection: string;
-    }) => {
-      if (!cohort) throw new Error("No cohort");
-      const res = await apiRequestForViewSession("POST", "/api/admin/exam/override", {
-          studentId, examType,
-          class: cohort.class, section: cohort.section,
-          overrideStatus: DEC_TO_STATUS[status],
-          nextClass, nextSection,
-        }, requireSelectedSessionId());
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
-      return res.json();
-    },
-    onSuccess: (_, { studentId }) => {
-      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
-    },
-    onError: (e: Error, { studentId }) => {
-      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
-      toast({ title: "Destination save failed", description: e.message, variant: "destructive" });
-    },
-  });
-
   const overrideClearMut = useMutation({
-    mutationFn: async ({ studentId }: { studentId: number }) => {
+    mutationFn: async ({ studentId, reason }: { studentId: number; reason: string }) => {
       if (!cohort) throw new Error("No cohort");
       const res = await apiRequestForViewSession("DELETE", "/api/admin/exam/override", {
-        studentId, examType, class: cohort.class, section: cohort.section,
+        studentId, examType, class: cohort.class, section: cohort.section, reason,
       }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Clear failed"); }
       return res.json();
@@ -452,72 +486,66 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
   });
 
-  // ── Bulk override (single atomic DB call for ALL selected students) ────────
   const bulkOverrideMut = useMutation({
-    mutationFn: async ({ items }: {
-      items: Array<{ studentId: number; overrideStatus: string; nextClass: string; nextSection: string }>;
-    }) => {
+    mutationFn: async ({ items, reason }: { items: OverrideSaveItem[]; reason: string }) => {
       if (!cohort) throw new Error("No cohort");
       const res = await apiRequestForViewSession("POST", "/api/admin/exam/override/bulk", {
-        items: items.map(i => ({
-          studentId: i.studentId,
+        reason,
+        items: items.map(item => ({
+          studentId: item.studentId,
           examType,
           class: cohort.class,
           section: cohort.section,
-          overrideStatus: i.overrideStatus,
-          nextClass: i.nextClass,
-          nextSection: i.nextSection,
+          overrideStatus: OVERRIDE_TO_STATUS[item.dec],
+          nextClass: item.nextClass,
+          nextSection: item.nextSection,
         })),
       }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Bulk save failed"); }
       return res.json() as Promise<{ count: number }>;
     },
     onSuccess: (data, { items }) => {
-      // Post-execution cleanup: clear selection AFTER successful DB write
       setSelectedStudents(new Set());
       setSavingStudents(prev => {
         const n = new Set(prev);
-        items.forEach(i => n.delete(i.studentId));
+        items.forEach(item => n.delete(item.studentId));
         return n;
       });
       toast({
-        title: "Bulk override saved",
-        description: `${data.count} student${data.count !== 1 ? "s" : ""} updated in the database.`,
+        title: "Bulk overrides saved — NOT YET EXECUTED",
+        description: `${data.count} student${data.count !== 1 ? "s" : ""} updated. Saved overrides remain separate from Teacher decisions.`,
         duration: 3000,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores"] });
     },
     onError: (e: Error, { items }) => {
       setSavingStudents(prev => {
         const n = new Set(prev);
-        items.forEach(i => n.delete(i.studentId));
+        items.forEach(item => n.delete(item.studentId));
         return n;
       });
       toast({ title: "Bulk save failed", description: e.message, variant: "destructive" });
     },
   });
 
-  // ── Reset all overrides for a cohort ─────────────────────────────────────
   const resetAllMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ reason }: { reason: string }) => {
       if (!cohort) throw new Error("No cohort");
       const res = await apiRequestForViewSession("DELETE", "/api/admin/exam/override/cohort", {
-        class: cohort.class, section: cohort.section, examType,
+        class: cohort.class, section: cohort.section, examType, reason,
       }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Reset failed"); }
       return res.json();
     },
     onSuccess: () => {
-      setOverrides({});
       setSelectedStudents(new Set());
       setShowResetConfirm(false);
-      toast({ title: "All overrides cleared", description: "Cohort reset to system baseline.", duration: 2500 });
+      setResetAllReason("");
+      setResetAllReasonError("");
+      toast({ title: "Saved proposals cleared", description: "Legacy override records were left unchanged.", duration: 2500 });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores"] });
     },
     onError: (e: Error) => {
-      setShowResetConfirm(false);
       toast({ title: "Reset failed", description: e.message, variant: "destructive" });
     },
   });
@@ -642,12 +670,60 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     return "pending";
   }
 
+  function canSaveOverride(student: AggStudent): boolean {
+    return overridesAvailable &&
+      student.resultStatus === "complete" &&
+      readinessForStudent(student) === "ready" &&
+      !cohort?.executedStudentIds?.includes(student.studentId);
+  }
+
+  function requestOverrideSave(items: OverrideSaveItem[], bulk: boolean) {
+    if (items.length === 0) return;
+    setOverrideReason("");
+    setOverrideReasonError("");
+    setOverrideReasonAction({ kind: "save", items, bulk });
+  }
+
+  function requestOverrideClear(studentId: number) {
+    setOverrideReason("");
+    setOverrideReasonError("");
+    setOverrideReasonAction({ kind: "clear", studentId });
+  }
+
+  function submitOverrideReason() {
+    const reason = overrideReason.trim();
+    if (!reason || reason.length > 500) {
+      setOverrideReasonError("Enter a reason of 1–500 characters.");
+      return;
+    }
+    const action = overrideReasonAction;
+    if (!action) return;
+    setOverrideReasonAction(null);
+    setOverrideReason("");
+    setOverrideReasonError("");
+    if (action.kind === "save") {
+      setSavingStudents(prev => {
+        const next = new Set(prev);
+        action.items.forEach(item => next.add(item.studentId));
+        return next;
+      });
+      if (action.bulk) {
+        bulkOverrideMut.mutate({ items: action.items, reason });
+      } else {
+        overrideSaveMut.mutate({ ...action.items[0], reason });
+      }
+      return;
+    }
+    setSavingStudents(prev => new Set(prev).add(action.studentId));
+    overrideClearMut.mutate({ studentId: action.studentId, reason });
+  }
+
   function previewForStudent(student: AggStudent) {
     const override = overrides[student.studentId];
     return getPromotionPreview({
       resultStatus: student.resultStatus,
       readiness: readinessForStudent(student),
-      override,
+      override: override?.isProposal ? undefined : override,
       ledgerDecision: student.ledger ? {
         decision: student.ledger.decision,
         targetClass: student.ledger.targetClass,
@@ -715,62 +791,54 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     resetAuditFilters();
   }
   function handleDestChange(studentId: number, field: "nextClass" | "nextSection", value: string, ov: AdminOverride) {
-    if (!overridesAvailable) return;
-    const updated: AdminOverride = { ...ov, [field]: value };
-    setOverrides(prev => ({ ...prev, [studentId]: updated }));
-    setSavingStudents(prev => { const n = new Set(prev); n.add(studentId); return n; });
-    destSaveMut.mutate({ studentId, status: updated.status, nextClass: updated.nextClass, nextSection: updated.nextSection });
+    const student = agg?.students.find(candidate => candidate.studentId === studentId);
+    if (!student || !canSaveOverride(student) || (ov.status !== "promote" && ov.status !== "retain")) return;
+    requestOverrideSave([{
+      studentId,
+      dec: ov.status,
+      nextClass: field === "nextClass" ? value : ov.nextClass,
+      nextSection: field === "nextSection" ? value : ov.nextSection,
+    }], false);
   }
 
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
-    if (!overridesAvailable) return;
-    setOverrides(prev => {
-      if (prev[studentId]?.status === dec) {
-        // Deselect — clear from DB
-        const n = { ...prev }; delete n[studentId];
-        setSavingStudents(ps => { const ns = new Set(ps); ns.add(studentId); return ns; });
-        overrideClearMut.mutate({ studentId });
-        return n;
-      }
-      const led = s.ledger;
-      const nc = dec === "retain" ? (cohort?.class ?? "") : (led?.targetClass || nxtCls(cohort?.class ?? "", schoolClasses));
-      const ns = dec === "retain" ? (cohort?.section ?? "") : (led?.targetSection || (cohort?.section ?? ""));
-      setSavingStudents(ps => { const ns2 = new Set(ps); ns2.add(studentId); return ns2; });
-      overrideSaveMut.mutate({ studentId, dec, s });
-      return { ...prev, [studentId]: { status: dec, nextClass: nc, nextSection: ns } };
-    });
+    if ((dec !== "promote" && dec !== "retain") || !canSaveOverride(s)) return;
+    if (overrides[studentId]?.status === dec) {
+      requestOverrideClear(studentId);
+      return;
+    }
+    const led = s.ledger;
+    const nextClass = dec === "retain"
+      ? (cohort?.class ?? "")
+      : (led?.targetClass || nxtCls(cohort?.class ?? "", schoolClasses));
+    const nextSection = dec === "retain"
+      ? (cohort?.section ?? "")
+      : (led?.targetSection || (cohort?.section ?? ""));
+    requestOverrideSave([{ studentId, dec, nextClass, nextSection }], false);
   }
   function handleBulkOverride(dec: AdminDecision) {
     if (!overridesAvailable || !agg || !cohort || selectedStudents.size === 0 || bulkOverrideMut.isPending) return;
-
-    // ── Build execution list from ONLY the selected student IDs ──────────────
-    // Non-selected students are never iterated — strict isolation guaranteed.
-    const DEC_TO_STATUS_MAP: Record<AdminDecision, string> = { promote: "PASS", retain: "REPEAT", grace_pass: "GRACE_PASS" };
-    const payloadItems: Array<{ studentId: number; overrideStatus: string; nextClass: string; nextSection: string }> = [];
-    const optimisticPatch: Record<number, AdminOverride> = {};
-
-    for (const studentId of selectedStudents) {
-      const s = agg.students.find(st => st.studentId === studentId);
-      if (!s) continue; // guard: skip any ID not present in current dataset
-      const led = s.ledger;
-      const nc = dec === "retain" ? cohort.class   : (led?.targetClass   || nxtCls(cohort.class,   schoolClasses));
-      const ns = dec === "retain" ? cohort.section : (led?.targetSection || cohort.section);
-      payloadItems.push({ studentId, overrideStatus: DEC_TO_STATUS_MAP[dec], nextClass: nc, nextSection: ns });
-      optimisticPatch[studentId] = { status: dec, nextClass: nc, nextSection: ns };
+    if (dec !== "promote" && dec !== "retain") return;
+    const selected = agg.students.filter(student => selectedStudents.has(student.studentId));
+    if (selected.length !== selectedStudents.size || selected.some(student => !canSaveOverride(student))) {
+      toast({
+        title: "Overrides not saved",
+        description: "Select only eligible Students with complete results and a valid locked Teacher decision.",
+        variant: "destructive",
+      });
+      return;
     }
-
-    if (payloadItems.length === 0) return;
-
-    // ── Optimistic local state update (UI responds instantly) ────────────────
-    setOverrides(prev => ({ ...prev, ...optimisticPatch }));
-    setSavingStudents(prev => {
-      const n = new Set(prev);
-      payloadItems.forEach(i => n.add(i.studentId));
-      return n;
-    });
-
-    // ── Single DB call — selection cleared AFTER server confirms success ─────
-    bulkOverrideMut.mutate({ items: payloadItems });
+    const items = selected.map(student => ({
+      studentId: student.studentId,
+      dec,
+      nextClass: dec === "retain"
+        ? cohort.class
+        : (student.ledger?.targetClass || nxtCls(cohort.class, schoolClasses)),
+      nextSection: dec === "retain"
+        ? cohort.section
+        : (student.ledger?.targetSection || cohort.section),
+    }));
+    requestOverrideSave(items, true);
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -951,13 +1019,18 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     <X className="w-3 h-3" />Reset Filters
                   </button>
                 )}
-                {/* Reset all overrides */}
+                {/* Clear audited Web proposals only */}
                 <button
-                  onClick={() => setShowResetConfirm(true)}
-                  disabled={!overridesAvailable || Object.keys(overrides).length === 0}
+                  onClick={() => {
+                    setResetAllReason("");
+                    setResetAllReasonError("");
+                    setShowResetConfirm(true);
+                  }}
+                  disabled={!overridesAvailable || !hasProposedOverrides || hasExecutedOverrides}
+                  title={hasExecutedOverrides ? "Overrides cannot be changed after Student execution." : undefined}
                   className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
                   data-testid="btn-reset-all-overrides">
-                  <RefreshCw className="w-3 h-3" />Reset All Overrides
+                  <RefreshCw className="w-3 h-3" />Clear Saved Proposals
                 </button>
                 <div className="ml-auto text-xs text-slate-500 whitespace-nowrap">
                   {hasFilters
@@ -972,11 +1045,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     <tr className="border-b border-[#1e2d44]">
                       <th className="px-4 py-3 w-10">
                         <Checkbox
-                          checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudents.has(s.studentId))}
+                          checked={
+                            filteredStudents.some(canSaveOverride) &&
+                            filteredStudents.filter(canSaveOverride).every(s => selectedStudents.has(s.studentId))
+                          }
+                          disabled={!filteredStudents.some(canSaveOverride)}
                           onCheckedChange={v => {
                             setSelectedStudents(prev => {
                               const n = new Set(prev);
-                              if (v) filteredStudents.forEach(s => n.add(s.studentId));
+                              if (v) filteredStudents.filter(canSaveOverride).forEach(s => n.add(s.studentId));
                               else   filteredStudents.forEach(s => n.delete(s.studentId));
                               return n;
                             });
@@ -1006,6 +1083,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       const thresh   = s.tierPassThreshold ?? agg.passThreshold;
                       const passing  = s.percentage !== null && s.percentage >= thresh;
                       const ledgerReadiness = readinessForStudent(s);
+                      const canEditOverride = canSaveOverride(s);
+                      const isExecuted = ledgerReadiness === "executed";
                       return (
                         <tr key={s.studentId}
                           className={`border-b border-[#1e2d44]/50 transition-colors ${selectedStudents.has(s.studentId) ? "bg-[#D4AF37]/5" : isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
@@ -1013,12 +1092,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                           <td className="px-4 py-3 w-10">
                             <Checkbox
                               checked={selectedStudents.has(s.studentId)}
+                              disabled={!canEditOverride}
                               onCheckedChange={v => setSelectedStudents(prev => {
                                 const n = new Set(prev);
                                 if (v) n.add(s.studentId); else n.delete(s.studentId);
                                 return n;
                               })}
-                              className="border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37]"
+                              className="border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37] disabled:opacity-30"
                               data-testid={`checkbox-select-${s.studentId}`}
                             />
                           </td>
@@ -1078,28 +1158,69 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                 {savingStudents.has(s.studentId) && (
                                   <Loader2 className="w-3 h-3 animate-spin text-[#D4AF37] shrink-0" />
                                 )}
-                                {(["promote","retain","grace_pass"] as AdminDecision[]).map(dec => (
+                                {(["promote", "retain"] as const).map(dec => (
                                   <button key={dec}
                                     onClick={() => toggleOverride(s.studentId, dec, s)}
-                                    disabled={!overridesAvailable || savingStudents.has(s.studentId)}
+                                    disabled={!canEditOverride || (!!ov && !ov.isProposal) || savingStudents.has(s.studentId)}
                                     data-testid={`btn-override-${dec}-${s.studentId}`}
                                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
                                       ov?.status === dec
-                                        ? dec==="promote"    ? "bg-emerald-500 border-emerald-500 text-white"
-                                        : dec==="retain"     ? "bg-red-500 border-red-500 text-white"
-                                        :                      "bg-purple-500 border-purple-500 text-white"
+                                        ? dec === "promote"
+                                          ? "bg-emerald-500 border-emerald-500 text-white"
+                                          : "bg-red-500 border-red-500 text-white"
                                         : "bg-transparent border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white"
                                     }`}>
-                                    {dec === "promote" ? "↑ Promote" : dec === "retain" ? "↺ Retain" : "✦ Grace"}
+                                    {dec === "promote" ? "↑ Promote" : "↺ Retain"}
                                   </button>
                                 ))}
                               </div>
-                              {/* ── Destination class/section dropdowns (shown when override is active) ── */}
-                              {ov && cohort && (
+                              {ov && (
+                                <div className="rounded-lg border border-[#D4AF37]/20 bg-[#0A1628]/60 px-2.5 py-2 space-y-1.5"
+                                  data-testid={`saved-override-${s.studentId}`}>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <Chip
+                                      c={ov.status === "promote" ? "emerald" : ov.status === "grace_pass" ? "purple" : "red"}
+                                      label={
+                                        ov.isProposal
+                                          ? (ov.rawStatus === "PROMOTE" ? "Saved Promote" : "Saved Retain")
+                                          : ov.rawStatus === "GRACE_PASS" ? "Legacy Grace" : `Legacy ${ov.rawStatus}`
+                                      }
+                                    />
+                                    <span className="text-[10px] font-bold tracking-wide text-amber-300"
+                                      data-testid={`status-override-not-executed-${s.studentId}`}>
+                                      NOT YET EXECUTED
+                                    </span>
+                                  </div>
+                                  {ov.audit ? (
+                                    <p className="text-[10px] leading-relaxed text-slate-400"
+                                      data-testid={`text-override-audit-${s.studentId}`}>
+                                      Reason: {ov.audit.reason} · {ov.audit.actorRole === "admin" ? "Admin" : "Support Staff"} #{ov.audit.actorId}
+                                      {" · "}{formatOverrideAuditTime(ov.audit.createdAt)}
+                                    </p>
+                                  ) : (
+                                    <p className="text-[10px] leading-relaxed text-slate-500"
+                                      data-testid={`text-override-legacy-${s.studentId}`}>
+                                      Legacy override — no reason or actor was recorded.
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] text-slate-400">
+                                    Proposed destination: Class {ov.nextClass} — {ov.nextSection}; target-session validation is pending Stage 3B-2.
+                                    {isExecuted ? " · execution is locked; this override was not applied" : ""}
+                                  </p>
+                                  <button
+                                    onClick={() => requestOverrideClear(s.studentId)}
+                                    disabled={isExecuted || !ov.isProposal || savingStudents.has(s.studentId) || !overridesAvailable}
+                                    className="text-[10px] font-semibold text-red-300 hover:text-red-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    data-testid={`btn-clear-override-${s.studentId}`}>
+                                    Clear saved override (reason required)
+                                  </button>
+                                </div>
+                              )}
+                              {ov && cohort && ov.status !== "grace_pass" && (
                                 <div className="flex gap-1.5 items-center flex-wrap pl-0.5" data-testid={`dest-selectors-${s.studentId}`}>
                                   <select
                                     value={ov.nextClass}
-                                    disabled={!overridesAvailable || ov.status === "retain" || savingStudents.has(s.studentId)}
+                                     disabled={!canEditOverride || (!!ov && !ov.isProposal) || ov.status === "retain" || savingStudents.has(s.studentId)}
                                     onChange={e => handleDestChange(s.studentId, "nextClass", e.target.value, ov)}
                                     className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
                                     data-testid={`select-nextclass-${s.studentId}`}>
@@ -1110,7 +1231,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                   </select>
                                   <select
                                     value={ov.nextSection}
-                                    disabled={!overridesAvailable || savingStudents.has(s.studentId)}
+                                     disabled={!canEditOverride || (!!ov && !ov.isProposal) || ov.status === "retain" || savingStudents.has(s.studentId)}
                                     onChange={e => handleDestChange(s.studentId, "nextSection", e.target.value, ov)}
                                     className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
                                     data-testid={`select-nextsection-${s.studentId}`}>
@@ -1128,7 +1249,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               </div>
               <div className="px-5 py-4 border-t border-[#1e2d44] flex justify-between items-center">
                 <p className="text-xs text-slate-500">
-                  {agg.students.length} student(s) — click override to change; click again to clear
+                  {agg.students.length} student(s) — Promote/Retain changes require a reason; clear and reset actions are audited
                   {selectedStudents.size > 0 && <span className="ml-2 text-[#D4AF37] font-semibold">· {selectedStudents.size} selected</span>}
                 </p>
                 <Button
@@ -1161,31 +1282,122 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                         <RefreshCw className="w-5 h-5 text-red-400" />
                       </div>
                       <div>
-                        <h3 className="font-bold text-white text-sm">Reset All Overrides?</h3>
+                        <h3 className="font-bold text-white text-sm">Clear Saved Proposals?</h3>
                         <p className="text-xs text-slate-400 mt-0.5">
                           Class {cohort?.class}-{cohort?.section} · {examType}
                         </p>
                       </div>
                     </div>
-                    <p className="text-sm text-slate-300 mb-5">
-                      Are you sure you want to clear all manual overrides for this cohort?
-                      Every student will revert to the system-calculated baseline.
+                    <p className="text-sm text-slate-300 mb-3">
+                      Clear only audited Web proposals in this exact cohort and term. Legacy override records remain unchanged. If any Student with a saved proposal has already been executed, the entire clear is rejected.
                     </p>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5" htmlFor="reset-overrides-reason">
+                      Reason (required)
+                    </label>
+                    <textarea
+                      id="reset-overrides-reason"
+                      value={resetAllReason}
+                      onChange={event => {
+                        setResetAllReason(event.target.value);
+                        setResetAllReasonError("");
+                      }}
+                      maxLength={500}
+                      rows={3}
+                      placeholder="Explain why these proposals should be cleared"
+                      className="w-full resize-y rounded-lg border border-[#1e2d44] bg-[#0A1628] px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-[#D4AF37]/60"
+                      data-testid="input-reset-overrides-reason"
+                    />
+                    {resetAllReasonError && (
+                      <p className="mt-1 text-xs text-red-300" data-testid="error-reset-overrides-reason">
+                        {resetAllReasonError}
+                      </p>
+                    )}
                     <div className="flex gap-2 justify-end">
                       <Button size="sm" variant="outline"
-                        onClick={() => setShowResetConfirm(false)}
+                        onClick={() => {
+                          setShowResetConfirm(false);
+                          setResetAllReason("");
+                          setResetAllReasonError("");
+                        }}
                         className="h-8 px-4 text-xs border-slate-600 text-slate-300 hover:text-white"
                         data-testid="btn-reset-cancel">
                         Cancel
                       </Button>
                       <Button size="sm"
-                        onClick={() => resetAllMut.mutate()}
-                        disabled={!overridesAvailable || resetAllMut.isPending}
+                        onClick={() => {
+                          const reason = resetAllReason.trim();
+                          if (!reason || reason.length > 500) {
+                            setResetAllReasonError("Enter a reason of 1–500 characters.");
+                            return;
+                          }
+                          resetAllMut.mutate({ reason });
+                        }}
+                        disabled={!overridesAvailable || resetAllMut.isPending || !resetAllReason.trim() || hasExecutedOverrides}
                         className="h-8 px-4 text-xs bg-red-600 hover:bg-red-500 text-white border-0"
                         data-testid="btn-reset-confirm">
                         {resetAllMut.isPending
                           ? <Loader2 className="w-3 h-3 animate-spin" />
-                          : "Yes, Clear All"}
+                          : "Yes, Clear Proposals"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {overrideReasonAction && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                  data-testid="override-reason-overlay">
+                  <div className="rounded-2xl border border-[#D4AF37]/30 bg-[#1A2942] p-6 max-w-md w-full mx-4 shadow-2xl">
+                    <h3 className="font-bold text-white text-sm">
+                      {overrideReasonAction.kind === "clear"
+                        ? "Clear Saved Override"
+                        : overrideReasonAction.bulk
+                          ? "Save Bulk Overrides"
+                          : "Save Promotion Override"}
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1 mb-4">
+                      Class {cohort?.class}-{cohort?.section} · {examType}. Saved overrides are separate from the Teacher recommendation and are NOT YET EXECUTED.
+                    </p>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5" htmlFor="promotion-override-reason">
+                      Reason (required)
+                    </label>
+                    <textarea
+                      id="promotion-override-reason"
+                      value={overrideReason}
+                      onChange={event => {
+                        setOverrideReason(event.target.value);
+                        setOverrideReasonError("");
+                      }}
+                      maxLength={500}
+                      rows={4}
+                      placeholder="Explain why this override should be saved or cleared"
+                      className="w-full resize-y rounded-lg border border-[#1e2d44] bg-[#0A1628] px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#D4AF37]/60"
+                      data-testid="input-promotion-override-reason"
+                    />
+                    {overrideReasonError && (
+                      <p className="mt-1 text-xs text-red-300" data-testid="error-promotion-override-reason">
+                        {overrideReasonError}
+                      </p>
+                    )}
+                    <div className="mt-4 flex gap-2 justify-end">
+                      <Button size="sm" variant="outline"
+                        onClick={() => {
+                          setOverrideReasonAction(null);
+                          setOverrideReason("");
+                          setOverrideReasonError("");
+                        }}
+                        className="h-8 px-4 text-xs border-slate-600 text-slate-300 hover:text-white"
+                        data-testid="btn-promotion-override-cancel">
+                        Cancel
+                      </Button>
+                      <Button size="sm"
+                        onClick={submitOverrideReason}
+                        disabled={!overrideReason.trim() || overrideReason.length > 500}
+                        className="h-8 px-4 text-xs bg-blue-600 hover:bg-blue-500 text-white border-0"
+                        data-testid="btn-promotion-override-submit">
+                        {overrideSaveMut.isPending || bulkOverrideMut.isPending || overrideClearMut.isPending
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : "Confirm change"}
                       </Button>
                     </div>
                   </div>

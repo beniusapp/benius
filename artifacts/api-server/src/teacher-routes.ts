@@ -42,6 +42,7 @@ import {
   validatePromotionSessionContext,
   type PromotionSessionContextResult,
 } from "./promotion-stage1";
+import { promotionOverrideActorFromSession } from "./promotion-override-policy";
 import {
   classScopedConfigValues,
   configuredClassName,
@@ -144,6 +145,27 @@ function resolveExamControllerActor(req: Request): ExamControllerActor | null {
     (userId ?? 0) > 0
     ? { id: userId!, role: "admin" }
     : null;
+}
+
+function resolvePromotionOverrideActor(req: Request, res: Response): ExamControllerActor | null {
+  const actor = promotionOverrideActorFromSession({
+    userRole: req.session.userRole,
+    userId: req.session.userId,
+    staffId: req.session.staffId,
+  });
+  const schoolId = req.session.schoolId;
+  if (
+    !actor ||
+    !Number.isSafeInteger(schoolId) ||
+    (schoolId ?? 0) <= 0
+  ) {
+    res.status(403).json({
+      message: "An authenticated Admin or active Support Staff member with Exam Controller access is required.",
+      code: "PROMOTION_OVERRIDE_ACTOR_INVALID",
+    });
+    return null;
+  }
+  return actor;
 }
 
 async function requireAdminPromotionSession(
@@ -4906,7 +4928,7 @@ Thank you for your prompt attention to this matter.
     try {
     const [evaluation, overrides, meta, classSubjectsMap, ledgerDecisions] = await Promise.all([
       storage.getPromotionCohortEvaluation(schoolId, selectedSession.sessionId, cls, section, term),
-      storage.getPromotionOverrides(schoolId, selectedSession.sessionId, cls, section, examType),
+      storage.getPromotionOverridesWithAudit(schoolId, selectedSession.sessionId, cls, section, examType),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
       storage.getPromotionDecisions(schoolId, cls, section, term, selectedSession.sessionId),
@@ -4970,7 +4992,7 @@ Thank you for your prompt attention to this matter.
       };
     });
 
-    res.json({
+    return res.json({
       students: studentsEnriched,
       overrides,
       overrideSessionIsolation: "SESSION_AWARE",
@@ -4980,7 +5002,7 @@ Thank you for your prompt attention to this matter.
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
       req.log?.error({ err: error }, "Failed to compute session-scoped Promotion results");
-      res.status(409).json({ message: "Unable to calculate results for this exact session, class-section and weighted term." });
+      return res.status(409).json({ message: "Unable to calculate results for this exact session, class-section and weighted term." });
     }
   });
 
@@ -4988,14 +5010,17 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
+    const actor = resolvePromotionOverrideActor(req, res);
+    if (!actor) return;
     const overrideSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
       class: z.string().min(1),
       section: z.string().min(1),
-      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      overrideStatus: z.enum(["PROMOTE", "RETAIN"]),
       nextClass: z.string().min(1),
       nextSection: z.string().min(1),
+      reason: z.string().trim().min(1).max(500),
     });
     const parsed = overrideSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -5009,8 +5034,8 @@ Thank you for your prompt attention to this matter.
         ...parsed.data,
         schoolId: req.session.schoolId!,
         sessionId: selectedSession.sessionId,
-      });
-      res.json({ message: "Override saved" });
+      }, actor);
+      res.json({ message: "Web Promotion proposal saved" });
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
       res.status(500).json({ message: "Failed to save Promotion override" });
@@ -5021,16 +5046,21 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
+    const actor = resolvePromotionOverrideActor(req, res);
+    if (!actor) return;
     const itemSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
       class: z.string().min(1),
       section: z.string().min(1),
-      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      overrideStatus: z.enum(["PROMOTE", "RETAIN"]),
       nextClass: z.string().min(1),
       nextSection: z.string().min(1),
     });
-    const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
+    const parsed = z.object({
+      reason: z.string().trim().min(1).max(500),
+      items: z.array(itemSchema).min(1),
+    }).safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         message: parsed.error.issues.map(issue => issue.message).join(", "),
@@ -5043,8 +5073,9 @@ Thank you for your prompt attention to this matter.
         ...item,
         schoolId,
         sessionId: selectedSession.sessionId,
-      })));
-      res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
+        reason: parsed.data.reason,
+      })), actor);
+      res.json({ message: "Web Promotion proposals saved", count: parsed.data.items.length });
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
       res.status(500).json({ message: "Failed to save bulk Promotion overrides" });
@@ -5055,10 +5086,13 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
+    const actor = resolvePromotionOverrideActor(req, res);
+    if (!actor) return;
     const schema = z.object({
       class: z.string().min(1),
       section: z.string().min(1),
       examType: z.string().min(1),
+      reason: z.string().trim().min(1).max(500),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -5072,8 +5106,8 @@ Thank you for your prompt attention to this matter.
         ...parsed.data,
         schoolId: req.session.schoolId!,
         sessionId: selectedSession.sessionId,
-      });
-      res.json({ message: "All overrides cleared" });
+      }, actor);
+      res.json({ message: "Saved Web Promotion proposals cleared" });
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
       res.status(500).json({ message: "Failed to clear Promotion overrides" });
@@ -5084,11 +5118,14 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
+    const actor = resolvePromotionOverrideActor(req, res);
+    if (!actor) return;
     const clearSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
       class: z.string().min(1),
       section: z.string().min(1),
+      reason: z.string().trim().min(1).max(500),
     });
     const parsed = clearSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -5102,8 +5139,8 @@ Thank you for your prompt attention to this matter.
         ...parsed.data,
         schoolId: req.session.schoolId!,
         sessionId: selectedSession.sessionId,
-      });
-      res.json({ message: "Override cleared" });
+      }, actor);
+      res.json({ message: "Web Promotion proposal cleared" });
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
       res.status(500).json({ message: "Failed to clear Promotion override" });

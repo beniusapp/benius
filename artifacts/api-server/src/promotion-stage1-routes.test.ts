@@ -35,7 +35,7 @@ test("Web Promotion routes require and preserve the selected school session", as
   }> = [];
   const auditRows: any[] = [];
   const overrideReads: unknown[][] = [];
-  const overrideWrites: Array<{ kind: string; data: any }> = [];
+  const overrideWrites: Array<{ kind: string; data: any; actor?: any }> = [];
   let resolveAudit!: () => void;
   const auditComplete = new Promise<void>(resolve => { resolveAudit = resolve; });
 
@@ -105,6 +105,10 @@ test("Web Promotion routes require and preserve the selected school session", as
     overrideReads.push(args);
     return [];
   });
+  replace(storage, "getPromotionOverridesWithAudit", async (...args: any[]) => {
+    overrideReads.push(args);
+    return [];
+  });
   replace(storage, "getAllSchoolMetadata", async () => ({
     classes: ["5", "6"],
     sections: ["A"],
@@ -133,6 +137,12 @@ test("Web Promotion routes require and preserve the selected school session", as
         name: "Student One",
         fromClass: "5",
         fromSection: "A",
+        toClass: "6",
+        toSection: "A",
+        examType: "Term 2",
+        totalObtained: 89,
+        totalMax: 100,
+        percentage: 89,
       }],
     };
   });
@@ -140,17 +150,17 @@ test("Web Promotion routes require and preserve the selected school session", as
     auditRows.push(data);
     resolveAudit();
   });
-  replace(storage, "upsertPromotionOverride", async (data: any) => {
-    overrideWrites.push({ kind: "single-save", data });
+  replace(storage, "upsertPromotionOverride", async (data: any, actor: any) => {
+    overrideWrites.push({ kind: "single-save", data, actor });
   });
-  replace(storage, "bulkUpsertPromotionOverrides", async (data: any) => {
-    overrideWrites.push({ kind: "bulk-save", data });
+  replace(storage, "bulkUpsertPromotionOverrides", async (data: any, actor: any) => {
+    overrideWrites.push({ kind: "bulk-save", data, actor });
   });
-  replace(storage, "deletePromotionOverride", async (data: any) => {
-    overrideWrites.push({ kind: "single-delete", data });
+  replace(storage, "deletePromotionOverride", async (data: any, actor: any) => {
+    overrideWrites.push({ kind: "single-delete", data, actor });
   });
-  replace(storage, "deleteAllPromotionOverrides", async (data: any) => {
-    overrideWrites.push({ kind: "cohort-delete", data });
+  replace(storage, "deleteAllPromotionOverrides", async (data: any, actor: any) => {
+    overrideWrites.push({ kind: "cohort-delete", data, actor });
   });
 
   t.after(() => {
@@ -166,9 +176,11 @@ test("Web Promotion routes require and preserve the selected school session", as
     const role = req.get("x-test-role") ?? "support_staff";
     const schoolId = Number(req.get("x-test-school") ?? 11);
     const allowedModules = (req.get("x-test-grants") ?? "").split(",").filter(Boolean);
-    (req as any).session = role === "admin"
-      ? { userId: 70, userRole: "admin", schoolId, allowedModules }
-      : { userId: -7, staffId: 7, userRole: "support_staff", schoolId, allowedModules };
+    (req as any).session = role === "anonymous"
+      ? {}
+      : role === "admin"
+        ? { userId: 70, userRole: "admin", schoolId, allowedModules }
+        : { userId: -7, staffId: 7, userRole: "support_staff", schoolId, allowedModules };
     next();
   });
   app.use(checkSessionContext);
@@ -191,7 +203,7 @@ test("Web Promotion routes require and preserve the selected school session", as
       body?: unknown;
       viewSessionId?: number | string;
       grants?: string[];
-      role?: "admin" | "support_staff";
+      role?: "admin" | "support_staff" | "anonymous";
       schoolId?: number;
     } = {},
   ) {
@@ -371,19 +383,20 @@ test("Web Promotion routes require and preserve the selected school session", as
   const overrideRequests = [
     ["POST", "/api/admin/exam/override", {
       studentId: 7, examType: "Term 2", class: "5", section: "A",
-      overrideStatus: "PASS", nextClass: "6", nextSection: "A",
+      overrideStatus: "PROMOTE", nextClass: "6", nextSection: "A", reason: "Correct placement",
     }, "single-save"],
     ["POST", "/api/admin/exam/override/bulk", {
+      reason: "Apply reviewed cohort outcomes",
       items: [
-        { studentId: 7, examType: "Term 2", class: "5", section: "A", overrideStatus: "PASS", nextClass: "6", nextSection: "A" },
-        { studentId: 8, examType: "Term 2", class: "5", section: "A", overrideStatus: "REPEAT", nextClass: "5", nextSection: "A" },
+        { studentId: 7, examType: "Term 2", class: "5", section: "A", overrideStatus: "PROMOTE", nextClass: "6", nextSection: "A" },
+        { studentId: 8, examType: "Term 2", class: "5", section: "A", overrideStatus: "RETAIN", nextClass: "5", nextSection: "A" },
       ],
     }, "bulk-save"],
     ["DELETE", "/api/admin/exam/override", {
-      studentId: 7, examType: "Term 2", class: "5", section: "A",
+      studentId: 7, examType: "Term 2", class: "5", section: "A", reason: "Remove incorrect override",
     }, "single-delete"],
     ["DELETE", "/api/admin/exam/override/cohort", {
-      class: "5", section: "A", examType: "Term 2",
+      class: "5", section: "A", examType: "Term 2", reason: "Reset reviewed cohort",
     }, "cohort-delete"],
   ] as const;
   for (const [method, path, body] of overrideRequests) {
@@ -428,6 +441,76 @@ test("Web Promotion routes require and preserve the selected school session", as
   assert.ok(overrideWrites[1].data.every((item: any) => item.sessionId === 42 && item.schoolId === 11));
   assert.equal(overrideWrites[2].data.sessionId, 42);
   assert.equal(overrideWrites[3].data.sessionId, 42);
+
+  assert.deepEqual(overrideWrites[0].actor, { id: 7, role: "support_staff" });
+  assert.deepEqual(overrideWrites[1].actor, { id: 7, role: "support_staff" });
+
+  const writeBody = {
+    studentId: 7,
+    examType: "Term 2",
+    class: "5",
+    section: "A",
+    overrideStatus: "PROMOTE",
+    nextClass: "6",
+    nextSection: "A",
+    reason: "  Reviewed placement records  ",
+    schoolId: 12,
+    sessionId: 88,
+    actorId: 999,
+  };
+  const noGrant = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: writeBody,
+    viewSessionId: 42,
+    grants: [],
+  });
+  assert.equal(noGrant.status, 403);
+
+  const unauthenticated = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: writeBody,
+    viewSessionId: 42,
+    role: "anonymous",
+    grants: examGrant,
+  });
+  assert.equal(unauthenticated.status, 403);
+
+  const blankReason = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: { ...writeBody, reason: " \n " },
+    viewSessionId: 42,
+    grants: examGrant,
+  });
+  assert.equal(blankReason.status, 400);
+  const newGrace = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: { ...writeBody, overrideStatus: "GRACE_PASS" },
+    viewSessionId: 42,
+    grants: examGrant,
+  });
+  assert.equal(newGrace.status, 400);
+  assert.equal(overrideWrites.length, 4);
+
+  const adminSave = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: writeBody,
+    viewSessionId: 42,
+    role: "admin",
+  });
+  assert.equal(adminSave.status, 200);
+  assert.deepEqual(overrideWrites[4].actor, { id: 70, role: "admin" });
+  assert.equal(overrideWrites[4].data.schoolId, 11);
+  assert.equal(overrideWrites[4].data.sessionId, 42);
+  assert.equal(overrideWrites[4].data.reason, "Reviewed placement records");
+
+  const crossSchool = await request("/api/admin/exam/override", {
+    method: "POST",
+    body: writeBody,
+    viewSessionId: 42,
+    role: "admin",
+    schoolId: 12,
+  });
+  assert.equal(crossSchool.status, 403);
 
   const scopedDelete = await request("/api/admin/ledger-term/Term%202", {
     method: "DELETE",

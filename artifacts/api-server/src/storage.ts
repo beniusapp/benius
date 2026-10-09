@@ -122,6 +122,15 @@ import {
   type PromotionLedgerReadiness,
 } from "./promotion-stage1";
 import {
+  assertPromotionOverrideActorRecord,
+  assertPromotionOverrideBatch,
+  requirePromotionOverrideReason,
+  validatePromotionOverrideCandidate,
+  type PromotionOverrideActor,
+  type PromotionOverrideActorRecord,
+  type PromotionOverrideStatus,
+} from "./promotion-override-policy";
+import {
   examTypeAffectsLockedPromotionTerm,
   publicationStateForExamScore,
 } from "./examination-marks-write-policy";
@@ -276,6 +285,248 @@ async function lockPromotionConfiguration(
 ): Promise<void> {
   const identity = `promotion-configuration:${schoolId}`;
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${identity}, 0))`);
+}
+
+async function assertActivePromotionOverrideActor(
+  tx: any,
+  schoolId: number,
+  actor: PromotionOverrideActor,
+): Promise<void> {
+  let record: PromotionOverrideActorRecord | undefined;
+  if (actor.role === "admin") {
+    const [user] = await tx.select({
+      id: users.id,
+      schoolId: users.schoolId,
+      isActive: users.isActive,
+      role: users.role,
+    }).from(users).where(and(
+      eq(users.id, actor.id),
+      eq(users.schoolId, schoolId),
+    )).for("update");
+    record = user;
+  } else {
+    const [staff] = await tx.select({
+      id: nonTeachingStaff.id,
+      schoolId: nonTeachingStaff.schoolId,
+      isActive: nonTeachingStaff.isActive,
+      allowedModules: nonTeachingStaff.allowedModules,
+    }).from(nonTeachingStaff).where(and(
+      eq(nonTeachingStaff.id, actor.id),
+      eq(nonTeachingStaff.schoolId, schoolId),
+    )).for("update");
+    record = staff;
+  }
+  assertPromotionOverrideActorRecord(actor, schoolId, record);
+}
+
+async function requireWritablePromotionOverrideSession(
+  tx: any,
+  schoolId: number,
+  sessionId: number,
+): Promise<void> {
+  const [session] = await tx.select({
+    isActive: academicSessions.isActive,
+  }).from(academicSessions).where(and(
+    eq(academicSessions.id, sessionId),
+    eq(academicSessions.schoolId, schoolId),
+  )).for("update");
+  if (!session?.isActive) {
+    throw new PromotionStage1Error(
+      "Promotion overrides can only be changed in the school's active Academic Session.",
+      403,
+      "SESSION_NOT_WRITABLE",
+    );
+  }
+}
+
+function promotionTeacherRecommendationSnapshot(decision: PromotionDecision | undefined) {
+  if (!decision) return null;
+  return {
+    decision: decision.decision,
+    targetClass: decision.targetClass,
+    targetSection: decision.targetSection,
+    autoSuggestion: decision.autoSuggestion,
+    manualIntervention: decision.manualIntervention,
+    locked: decision.locked,
+    lockedAt: decision.lockedAt,
+    processedByTeacherId: decision.processedByTeacherId,
+  };
+}
+
+type PromotionOverrideSnapshot = Pick<
+  PromotionOverride,
+  "overrideStatus" | "nextClass" | "nextSection" | "overriddenAt"
+>;
+
+function promotionOverrideSnapshot(override: PromotionOverrideSnapshot | undefined) {
+  if (!override) return null;
+  return {
+    overrideStatus: override.overrideStatus,
+    nextClass: override.nextClass,
+    nextSection: override.nextSection,
+    overriddenAt: override.overriddenAt,
+  };
+}
+
+function promotionOverrideSnapshotFromEvent(
+  event: PromotionOverrideAuditEvent | undefined,
+): PromotionOverrideSnapshot | undefined {
+  const selected = event?.details?.selectedOverride;
+  if (!selected) return undefined;
+  const overriddenAt = selected.overriddenAt
+    ? new Date(selected.overriddenAt)
+    : new Date(event!.row.createdAt);
+  if (Number.isNaN(overriddenAt.getTime())) return undefined;
+  return {
+    overrideStatus: selected.overrideStatus,
+    nextClass: selected.nextClass,
+    nextSection: selected.nextSection,
+    overriddenAt,
+  };
+}
+
+async function writePromotionOverrideAudit(
+  tx: any,
+  input: {
+    actionType: "PROMOTION_OVERRIDE_PROPOSED" | "PROMOTION_OVERRIDE_PROPOSAL_CLEARED";
+    actor: PromotionOverrideActor;
+    schoolId: number;
+    sessionId: number;
+    studentId: number;
+    examType: string;
+    class: string;
+    section: string;
+    reason: string;
+    teacherDecision?: PromotionDecision;
+    previousOverride?: PromotionOverrideSnapshot;
+    selectedOverride?: PromotionOverrideSnapshot;
+  },
+): Promise<void> {
+  await tx.insert(auditLogs).values({
+    schoolId: input.schoolId,
+    sessionId: input.sessionId,
+    actionType: input.actionType,
+    entityType: "promotion_override",
+    entityId: input.studentId,
+    actionBy: input.actor.id,
+    actionByRole: input.actor.role,
+    details: JSON.stringify({
+      version: 1,
+      source: "web_exam_controller_proposal",
+      scope: {
+        schoolId: input.schoolId,
+        sessionId: input.sessionId,
+        studentId: input.studentId,
+        examType: input.examType,
+        class: input.class,
+        section: input.section,
+      },
+      reason: input.reason,
+      originalTeacherRecommendation: promotionTeacherRecommendationSnapshot(input.teacherDecision),
+      previousOverride: promotionOverrideSnapshot(input.previousOverride),
+      selectedOverride: input.actionType === "PROMOTION_OVERRIDE_PROPOSAL_CLEARED"
+        ? null
+        : promotionOverrideSnapshot(input.selectedOverride),
+    }),
+  });
+}
+
+type PromotionOverrideAuditScope = {
+  schoolId: number;
+  sessionId: number;
+  class: string;
+  section: string;
+  examType: string;
+};
+
+type PromotionOverrideAuditEvent = {
+  row: typeof auditLogs.$inferSelect;
+  details: any;
+};
+
+function parsePromotionOverrideAuditEvent(
+  row: typeof auditLogs.$inferSelect,
+  scope: PromotionOverrideAuditScope,
+): PromotionOverrideAuditEvent | null {
+  if (
+    !row.details ||
+    (row.actionType !== "PROMOTION_OVERRIDE_PROPOSED" &&
+      row.actionType !== "PROMOTION_OVERRIDE_PROPOSAL_CLEARED") ||
+    row.entityType !== "promotion_override" ||
+    !Number.isInteger(row.entityId) ||
+    !Number.isInteger(row.actionBy) ||
+    (row.actionByRole !== "admin" && row.actionByRole !== "support_staff")
+  ) {
+    return null;
+  }
+
+  let details: any;
+  try {
+    details = JSON.parse(row.details);
+  } catch {
+    return null;
+  }
+  const eventScope = details?.scope;
+  if (
+    details?.version !== 1 ||
+    details?.source !== "web_exam_controller_proposal" ||
+    typeof details?.reason !== "string" ||
+    !details.reason.trim() ||
+    eventScope?.schoolId !== scope.schoolId ||
+    eventScope?.sessionId !== scope.sessionId ||
+    eventScope?.class !== scope.class ||
+    eventScope?.section !== scope.section ||
+    eventScope?.examType !== scope.examType ||
+    eventScope?.studentId !== row.entityId
+  ) {
+    return null;
+  }
+  if (row.actionType === "PROMOTION_OVERRIDE_PROPOSED") {
+    const selected = details?.selectedOverride;
+    if (
+      !selected ||
+      (selected.overrideStatus !== "PROMOTE" && selected.overrideStatus !== "RETAIN") ||
+      typeof selected.nextClass !== "string" ||
+      !selected.nextClass ||
+      typeof selected.nextSection !== "string" ||
+      !selected.nextSection
+    ) {
+      return null;
+    }
+  } else if (details?.selectedOverride !== null) {
+    return null;
+  }
+
+  return { row, details };
+}
+
+async function loadLatestPromotionOverrideAuditEvents(
+  executor: any,
+  scope: PromotionOverrideAuditScope,
+  studentIds?: number[],
+  lockRows = false,
+): Promise<Map<number, PromotionOverrideAuditEvent>> {
+  if (studentIds && studentIds.length === 0) return new Map();
+  const conditions = [
+    eq(auditLogs.schoolId, scope.schoolId),
+    eq(auditLogs.sessionId, scope.sessionId),
+    inArray(auditLogs.actionType, [
+      "PROMOTION_OVERRIDE_PROPOSED",
+      "PROMOTION_OVERRIDE_PROPOSAL_CLEARED",
+    ]),
+    eq(auditLogs.entityType, "promotion_override"),
+  ];
+  if (studentIds) conditions.push(inArray(auditLogs.entityId, studentIds));
+  const query = executor.select().from(auditLogs).where(and(...conditions))
+    .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id));
+  const rows = lockRows ? await query.for("update") : await query;
+  const latestByStudent = new Map<number, PromotionOverrideAuditEvent>();
+  for (const row of rows as Array<typeof auditLogs.$inferSelect>) {
+    if (latestByStudent.has(row.entityId)) continue;
+    const event = parsePromotionOverrideAuditEvent(row, scope);
+    if (event) latestByStudent.set(row.entityId, event);
+  }
+  return latestByStudent;
 }
 
 function classMetadataValues(map: Record<string, unknown>, cls: string): unknown[] {
@@ -7241,187 +7492,331 @@ export class DatabaseStorage {
 
   async upsertPromotionOverride(data: {
     schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
-    overrideStatus: string; nextClass: string; nextSection: string;
-  }): Promise<void> {
-    await this.bulkUpsertPromotionOverrides([data]);
+    overrideStatus: PromotionOverrideStatus; nextClass: string; nextSection: string; reason: string;
+  }, actor: PromotionOverrideActor): Promise<void> {
+    await this.bulkUpsertPromotionOverrides([data], actor);
   }
 
   async bulkUpsertPromotionOverrides(items: Array<{
     schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
-    overrideStatus: string; nextClass: string; nextSection: string;
-  }>): Promise<void> {
+    overrideStatus: PromotionOverrideStatus; nextClass: string; nextSection: string; reason: string;
+  }>, actor: PromotionOverrideActor): Promise<void> {
     if (items.length === 0) return;
+    assertPromotionOverrideBatch(items);
     const first = items[0];
-    const studentIds = items.map(item => item.studentId);
-    if (
-      new Set(studentIds).size !== studentIds.length ||
-      items.some(item =>
-        item.schoolId !== first.schoolId ||
-        item.sessionId !== first.sessionId ||
-        item.class !== first.class ||
-        item.section !== first.section ||
-        item.examType !== first.examType
-      )
-    ) {
-      throw new PromotionStage1Error(
-        "Promotion overrides in one request must use one session, cohort, and examination with no duplicate Students.",
-        400,
-        "MIXED_PROMOTION_COHORT",
-      );
-    }
+    const normalizedItems = items.map(item => ({
+      ...item,
+      reason: requirePromotionOverrideReason(item.reason),
+    })).sort((left, right) => left.studentId - right.studentId);
+    const studentIds = normalizedItems.map(item => item.studentId);
 
     await db.transaction(async (tx) => {
-      const [session] = await tx.select({
-        id: academicSessions.id,
-        isActive: academicSessions.isActive,
-      })
-        .from(academicSessions)
-        .where(and(
-          eq(academicSessions.id, first.sessionId),
-          eq(academicSessions.schoolId, first.schoolId),
-        ))
-        .for("update");
-      if (!session?.isActive) {
+      await lockPromotionCohort(tx, first.schoolId, first.sessionId, first.class, first.section);
+      await requireWritablePromotionOverrideSession(tx, first.schoolId, first.sessionId);
+      await assertActivePromotionOverrideActor(tx, first.schoolId, actor);
+
+      const evaluation = await loadPromotionCohortEvaluation(
+        tx,
+        first.schoolId,
+        first.sessionId,
+        first.class,
+        first.section,
+        first.examType,
+      );
+      assertPromotionGateEnabled(evaluation.policy, first.examType);
+      const resultByStudent = evaluation.resultsByStudent as Map<number, {
+        resultStatus: "complete" | "incomplete";
+        promoted: boolean | null;
+      }>;
+      const rosterStudentIds = new Set(evaluation.rosterRows.map((row: { studentId: number }) => row.studentId));
+
+      const decisions = await tx.select().from(promotionDecisions).where(and(
+        eq(promotionDecisions.schoolId, first.schoolId),
+        eq(promotionDecisions.sessionId, first.sessionId),
+        eq(promotionDecisions.class, first.class),
+        eq(promotionDecisions.section, first.section),
+        eq(promotionDecisions.term, first.examType),
+        inArray(promotionDecisions.studentId, studentIds),
+      )).orderBy(promotionDecisions.studentId).for("update");
+      const decisionByStudent = new Map<number, PromotionDecision>();
+      for (const decision of decisions as PromotionDecision[]) {
+        if (decisionByStudent.has(decision.studentId)) {
+          throw new PromotionStage1Error(
+            "More than one Teacher decision exists for a selected Student in this exact term.",
+            409,
+            "PROMOTION_DECISION_AMBIGUOUS",
+          );
+        }
+        decisionByStudent.set(decision.studentId, decision);
+      }
+      if (decisionByStudent.size !== studentIds.length) {
         throw new PromotionStage1Error(
-          "Promotion overrides can only be saved in the school's active Academic Session.",
-          403,
-          "SESSION_NOT_WRITABLE",
+          "Every selected Student needs a matching locked Teacher Promotion decision for this session, class-section and term.",
+          409,
+          "PROMOTION_DECISION_MISSING",
         );
       }
 
-      const [studentRows, enrollmentRows] = await Promise.all([
-        tx.select({
-          id: students.id,
-          schoolId: students.schoolId,
-          isActive: students.isActive,
-          dsid: students.digitalStudentId,
-          name: students.name,
-        })
-          .from(students)
-          .where(and(
-            eq(students.schoolId, first.schoolId),
-            inArray(students.id, studentIds),
-          ))
-          .for("update"),
-        tx.select({
-          studentId: enrollments.studentId,
-          schoolId: enrollments.schoolId,
-          sessionId: enrollments.sessionId,
-          className: enrollments.className,
-          sectionName: enrollments.sectionName,
-          status: enrollments.status,
-        })
-          .from(enrollments)
-          .where(and(
-            eq(enrollments.schoolId, first.schoolId),
-            eq(enrollments.sessionId, first.sessionId),
-            inArray(enrollments.studentId, studentIds),
-          ))
-          .for("update"),
-      ]);
+      const teacherIds = [...new Set((decisions as PromotionDecision[])
+        .map(decision => decision.processedByTeacherId)
+        .filter((id): id is number => id !== null))];
+      const teacherRows = teacherIds.length ? await tx.select({ id: teachers.id })
+        .from(teachers)
+        .where(and(
+          eq(teachers.schoolId, first.schoolId),
+          inArray(teachers.id, teacherIds),
+        ))
+        .for("update") : [];
+      const validTeacherIds = new Set(teacherRows.map((teacher: { id: number }) => teacher.id));
 
-      validatePromotionExecutionRoster(
-        first.schoolId,
-        first.sessionId,
-        items.map(item => ({
-          studentId: item.studentId,
-          fromClass: item.class,
-          fromSection: item.section,
+      const metadataRows = await tx.select({
+        metaKey: schoolMetadata.metaKey,
+        metaValue: schoolMetadata.metaValue,
+      }).from(schoolMetadata).where(and(
+        eq(schoolMetadata.schoolId, first.schoolId),
+        inArray(schoolMetadata.metaKey, ["classes", "class_sections"]),
+      )).for("update");
+      const metadataByKey = new Map(metadataRows.map((row: { metaKey: string; metaValue: string }) => [
+        row.metaKey,
+        row.metaValue,
+      ]));
+      let configuredClasses: string[] = [];
+      let configuredSections: Record<string, unknown> = {};
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("classes") ?? "[]");
+        if (Array.isArray(value)) configuredClasses = value.filter((item): item is string => typeof item === "string");
+      } catch {}
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("class_sections") ?? "{}");
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          configuredSections = value as Record<string, unknown>;
+        }
+      } catch {}
+
+      for (const item of normalizedItems) {
+        const decision = decisionByStudent.get(item.studentId);
+        const result = resultByStudent.get(item.studentId);
+        validatePromotionOverrideCandidate({
+          status: item.overrideStatus,
           nextClass: item.nextClass,
           nextSection: item.nextSection,
-          examType: item.examType,
-          totalObtained: 0,
-          totalMax: 0,
-          percentage: 0,
-        })),
-        studentRows,
-        enrollmentRows,
-      );
+          sourceClass: item.class,
+          sourceSection: item.section,
+          resultStatus: result?.resultStatus,
+          promoted: result?.promoted,
+          decision,
+          teacherIsValid: !!decision?.processedByTeacherId
+            && validTeacherIds.has(decision.processedByTeacherId),
+          teacherTargetIsConfigured: !!decision
+            && configuredClasses.includes(decision.targetClass)
+            && Array.isArray(configuredSections[decision.targetClass])
+            && (configuredSections[decision.targetClass] as unknown[]).includes(decision.targetSection),
+          overrideTargetIsConfigured: configuredClasses.includes(item.nextClass)
+            && Array.isArray(configuredSections[item.nextClass])
+            && (configuredSections[item.nextClass] as unknown[]).includes(item.nextSection),
+          studentIsInSourceRoster: rosterStudentIds.has(item.studentId),
+          sessionIsActive: true,
+          adminExecuted: decision?.adminExecuted === true,
+        });
+      }
 
-      for (const item of items) {
-        await tx.insert(promotionOverrides).values(item)
-          .onConflictDoUpdate({
-            target: [
-              promotionOverrides.schoolId,
-              promotionOverrides.sessionId,
-              promotionOverrides.studentId,
-              promotionOverrides.examType,
-              promotionOverrides.class,
-              promotionOverrides.section,
-            ],
-            set: {
-              overrideStatus: item.overrideStatus,
-              nextClass: item.nextClass,
-              nextSection: item.nextSection,
-              overriddenAt: new Date(),
-            },
-          });
+      const overrideScope = {
+        schoolId: first.schoolId,
+        sessionId: first.sessionId,
+        class: first.class,
+        section: first.section,
+        examType: first.examType,
+      };
+      const latestEvents = await loadLatestPromotionOverrideAuditEvents(
+        tx,
+        overrideScope,
+        studentIds,
+        true,
+      );
+      const legacyOverrides = await tx.select().from(promotionOverrides).where(and(
+        eq(promotionOverrides.schoolId, first.schoolId),
+        eq(promotionOverrides.sessionId, first.sessionId),
+        eq(promotionOverrides.class, first.class),
+        eq(promotionOverrides.section, first.section),
+        eq(promotionOverrides.examType, first.examType),
+        inArray(promotionOverrides.studentId, studentIds),
+      )).orderBy(promotionOverrides.studentId).for("update");
+      const legacyByStudent = new Map(
+        legacyOverrides.map((row: PromotionOverride) => [row.studentId, row]),
+      );
+      for (const item of normalizedItems) {
+        const previousEvent = latestEvents.get(item.studentId);
+        const previousOverride = previousEvent?.row.actionType === "PROMOTION_OVERRIDE_PROPOSED"
+          ? promotionOverrideSnapshotFromEvent(previousEvent)
+          : legacyByStudent.get(item.studentId);
+        const selectedOverride: PromotionOverrideSnapshot = {
+          overrideStatus: item.overrideStatus,
+          nextClass: item.nextClass,
+          nextSection: item.nextSection,
+          overriddenAt: new Date(),
+        };
+        await writePromotionOverrideAudit(tx, {
+          actionType: "PROMOTION_OVERRIDE_PROPOSED",
+          actor,
+          schoolId: item.schoolId,
+          sessionId: item.sessionId,
+          studentId: item.studentId,
+          examType: item.examType,
+          class: item.class,
+          section: item.section,
+          reason: item.reason,
+          teacherDecision: decisionByStudent.get(item.studentId),
+          previousOverride,
+          selectedOverride,
+        });
       }
     });
   }
 
   async deleteAllPromotionOverrides(data: {
-    schoolId: number; sessionId: number; class: string; section: string; examType: string;
-  }): Promise<void> {
+    schoolId: number; sessionId: number; class: string; section: string; examType: string; reason: string;
+  }, actor: PromotionOverrideActor): Promise<void> {
+    const reason = requirePromotionOverrideReason(data.reason);
     await db.transaction(async (tx) => {
-      const [session] = await tx.select({ isActive: academicSessions.isActive })
-        .from(academicSessions)
-        .where(and(
-          eq(academicSessions.id, data.sessionId),
-          eq(academicSessions.schoolId, data.schoolId),
-        ))
-        .for("update");
-      if (!session?.isActive) {
+      await lockPromotionCohort(tx, data.schoolId, data.sessionId, data.class, data.section);
+      await requireWritablePromotionOverrideSession(tx, data.schoolId, data.sessionId);
+      await assertActivePromotionOverrideActor(tx, data.schoolId, actor);
+      const scope = {
+        schoolId: data.schoolId,
+        sessionId: data.sessionId,
+        class: data.class,
+        section: data.section,
+        examType: data.examType,
+      };
+      const latestEvents = await loadLatestPromotionOverrideAuditEvents(tx, scope, undefined, true);
+      const activeProposals = [...latestEvents.values()].filter(event =>
+        event.row.actionType === "PROMOTION_OVERRIDE_PROPOSED",
+      );
+      if (activeProposals.length === 0) return;
+      const studentIds = activeProposals.map(event => event.row.entityId);
+      const decisions = await tx.select().from(promotionDecisions).where(and(
+        eq(promotionDecisions.schoolId, data.schoolId),
+        eq(promotionDecisions.sessionId, data.sessionId),
+        eq(promotionDecisions.class, data.class),
+        eq(promotionDecisions.section, data.section),
+        eq(promotionDecisions.term, data.examType),
+        inArray(promotionDecisions.studentId, studentIds),
+      )).orderBy(promotionDecisions.studentId).for("update") as PromotionDecision[];
+      if (decisions.some(decision => decision.adminExecuted)) {
         throw new PromotionStage1Error(
-          "Promotion overrides can only be changed in the school's active Academic Session.",
-          403,
-          "SESSION_NOT_WRITABLE",
+          "At least one Student in this cohort has already had Promotion executed. No overrides were cleared.",
+          409,
+          "PROMOTION_ALREADY_EXECUTED",
         );
       }
-      await tx.delete(promotionOverrides).where(and(
-        eq(promotionOverrides.schoolId, data.schoolId),
-        eq(promotionOverrides.sessionId, data.sessionId),
-        eq(promotionOverrides.class, data.class),
-        eq(promotionOverrides.section, data.section),
-        eq(promotionOverrides.examType, data.examType),
-      ));
+      const decisionByStudent = new Map(decisions.map(decision => [decision.studentId, decision]));
+      for (const event of activeProposals) {
+        const previousOverride = promotionOverrideSnapshotFromEvent(event);
+        if (!previousOverride) {
+          throw new PromotionStage1Error(
+            "The saved Web proposal is incomplete and cannot be cleared safely.",
+            409,
+            "PROMOTION_OVERRIDE_EVENT_INVALID",
+          );
+        }
+        const studentId = event.row.entityId;
+        await writePromotionOverrideAudit(tx, {
+          actionType: "PROMOTION_OVERRIDE_PROPOSAL_CLEARED",
+          actor,
+          schoolId: data.schoolId,
+          sessionId: data.sessionId,
+          studentId,
+          examType: data.examType,
+          class: data.class,
+          section: data.section,
+          reason,
+          teacherDecision: decisionByStudent.get(studentId),
+          previousOverride,
+        });
+      }
     });
   }
 
   async deletePromotionOverride(data: {
-    schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
-  }): Promise<void> {
+    schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string; reason: string;
+  }, actor: PromotionOverrideActor): Promise<void> {
+    const reason = requirePromotionOverrideReason(data.reason);
     await db.transaction(async (tx) => {
-      const [session] = await tx.select({ isActive: academicSessions.isActive })
-        .from(academicSessions)
-        .where(and(
-          eq(academicSessions.id, data.sessionId),
-          eq(academicSessions.schoolId, data.schoolId),
-        ))
-        .for("update");
-      if (!session?.isActive) {
+      await lockPromotionCohort(tx, data.schoolId, data.sessionId, data.class, data.section);
+      await requireWritablePromotionOverrideSession(tx, data.schoolId, data.sessionId);
+      await assertActivePromotionOverrideActor(tx, data.schoolId, actor);
+      const scope = {
+        schoolId: data.schoolId,
+        sessionId: data.sessionId,
+        class: data.class,
+        section: data.section,
+        examType: data.examType,
+      };
+      const latestEvents = await loadLatestPromotionOverrideAuditEvents(
+        tx,
+        scope,
+        [data.studentId],
+        true,
+      );
+      const currentEvent = latestEvents.get(data.studentId);
+      if (!currentEvent || currentEvent.row.actionType !== "PROMOTION_OVERRIDE_PROPOSED") {
+        const [legacyOverride] = await tx.select().from(promotionOverrides).where(and(
+          eq(promotionOverrides.schoolId, data.schoolId),
+          eq(promotionOverrides.sessionId, data.sessionId),
+          eq(promotionOverrides.studentId, data.studentId),
+          eq(promotionOverrides.examType, data.examType),
+          eq(promotionOverrides.class, data.class),
+          eq(promotionOverrides.section, data.section),
+        )).for("update");
+        if (legacyOverride) {
+          throw new PromotionStage1Error(
+            "Legacy overrides are read-only in this Web proposal workflow and were not changed.",
+            409,
+            "PROMOTION_OVERRIDE_LEGACY_READ_ONLY",
+          );
+        }
         throw new PromotionStage1Error(
-          "Promotion overrides can only be changed in the school's active Academic Session.",
-          403,
-          "SESSION_NOT_WRITABLE",
+          "No current Web Promotion proposal exists for this Student.",
+          409,
+          "PROMOTION_OVERRIDE_NOT_FOUND",
         );
       }
-      const [student] = await tx.select({ id: students.id })
-        .from(students)
-        .where(and(
-          eq(students.id, data.studentId),
-          eq(students.schoolId, data.schoolId),
-        ))
-        .for("update");
-      if (!student) return;
-      await tx.delete(promotionOverrides).where(and(
-        eq(promotionOverrides.schoolId, data.schoolId),
-        eq(promotionOverrides.sessionId, data.sessionId),
-        eq(promotionOverrides.studentId, data.studentId),
-        eq(promotionOverrides.examType, data.examType),
-        eq(promotionOverrides.class, data.class),
-        eq(promotionOverrides.section, data.section),
-      ));
+      const previousOverride = promotionOverrideSnapshotFromEvent(currentEvent);
+      if (!previousOverride) {
+        throw new PromotionStage1Error(
+          "The saved Web proposal is incomplete and cannot be cleared safely.",
+          409,
+          "PROMOTION_OVERRIDE_EVENT_INVALID",
+        );
+      }
+      const decisions = await tx.select().from(promotionDecisions).where(and(
+        eq(promotionDecisions.schoolId, data.schoolId),
+        eq(promotionDecisions.sessionId, data.sessionId),
+        eq(promotionDecisions.studentId, data.studentId),
+        eq(promotionDecisions.class, data.class),
+        eq(promotionDecisions.section, data.section),
+        eq(promotionDecisions.term, data.examType),
+      )).for("update") as PromotionDecision[];
+      if (decisions.some(decision => decision.adminExecuted)) {
+        throw new PromotionStage1Error(
+          "This Student's Promotion has already been executed. The saved override cannot be changed or deleted.",
+          409,
+          "PROMOTION_ALREADY_EXECUTED",
+        );
+      }
+      await writePromotionOverrideAudit(tx, {
+        actionType: "PROMOTION_OVERRIDE_PROPOSAL_CLEARED",
+        actor,
+        schoolId: data.schoolId,
+        sessionId: data.sessionId,
+        studentId: data.studentId,
+        examType: data.examType,
+        class: data.class,
+        section: data.section,
+        reason,
+        teacherDecision: decisions[0],
+        previousOverride,
+      });
     });
   }
 
@@ -7433,6 +7828,118 @@ export class DatabaseStorage {
       eq(promotionOverrides.section, section),
       eq(promotionOverrides.examType, examType),
     ));
+  }
+
+  async getPromotionOverridesWithAudit(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    examType: string,
+  ): Promise<Array<PromotionOverride & {
+    audit: {
+      reason: string;
+      actorId: number;
+      actorRole: "admin" | "support_staff";
+      createdAt: Date;
+    } | null;
+    isProposal: boolean;
+  }>> {
+    const legacyOverrides = await this.getPromotionOverrides(schoolId, sessionId, cls, section, examType);
+    const scope = { schoolId, sessionId, class: cls, section, examType };
+    const latestEvents = await loadLatestPromotionOverrideAuditEvents(db, scope);
+    const legacyAuditByStudent = new Map<number, {
+      reason: string;
+      actorId: number;
+      actorRole: "admin" | "support_staff";
+      createdAt: Date;
+    }>();
+    if (legacyOverrides.length > 0) {
+      const legacyByStudent = new Map(legacyOverrides.map(override => [override.studentId, override]));
+      const legacyAuditRows = await db.select().from(auditLogs).where(and(
+        eq(auditLogs.schoolId, schoolId),
+        eq(auditLogs.sessionId, sessionId),
+        eq(auditLogs.actionType, "PROMOTION_OVERRIDE_SAVED"),
+        eq(auditLogs.entityType, "promotion_override"),
+        inArray(auditLogs.entityId, legacyOverrides.map(override => override.studentId)),
+      )).orderBy(desc(auditLogs.createdAt), desc(auditLogs.id));
+      for (const row of legacyAuditRows) {
+        if (
+          legacyAuditByStudent.has(row.entityId) ||
+          !row.details ||
+          !Number.isInteger(row.actionBy) ||
+          (row.actionByRole !== "admin" && row.actionByRole !== "support_staff")
+        ) continue;
+        const legacyOverride = legacyByStudent.get(row.entityId);
+        if (!legacyOverride) continue;
+        let details: any;
+        try { details = JSON.parse(row.details); } catch { continue; }
+        const eventScope = details?.scope;
+        const selected = details?.selectedOverride;
+        if (
+          details?.source !== "web_exam_controller" ||
+          eventScope?.schoolId !== schoolId ||
+          eventScope?.sessionId !== sessionId ||
+          eventScope?.studentId !== row.entityId ||
+          eventScope?.examType !== examType ||
+          eventScope?.class !== cls ||
+          eventScope?.section !== section ||
+          selected?.overrideStatus !== legacyOverride.overrideStatus ||
+          selected?.nextClass !== legacyOverride.nextClass ||
+          selected?.nextSection !== legacyOverride.nextSection ||
+          typeof details?.reason !== "string" ||
+          !details.reason.trim()
+        ) continue;
+        legacyAuditByStudent.set(row.entityId, {
+          reason: details.reason,
+          actorId: row.actionBy!,
+          actorRole: row.actionByRole,
+          createdAt: row.createdAt,
+        });
+      }
+    }
+    const overridesByStudent = new Map<number, PromotionOverride & {
+      audit: {
+        reason: string;
+        actorId: number;
+        actorRole: "admin" | "support_staff";
+        createdAt: Date;
+      } | null;
+      isProposal: boolean;
+    }>();
+    for (const legacyOverride of legacyOverrides) {
+      overridesByStudent.set(legacyOverride.studentId, {
+        ...legacyOverride,
+        audit: legacyAuditByStudent.get(legacyOverride.studentId) ?? null,
+        isProposal: false,
+      });
+    }
+    for (const event of latestEvents.values()) {
+      if (event.row.actionType !== "PROMOTION_OVERRIDE_PROPOSED") continue;
+      const selected = promotionOverrideSnapshotFromEvent(event);
+      if (!selected) continue;
+      overridesByStudent.set(event.row.entityId, {
+        id: -Math.abs(event.row.id),
+        schoolId,
+        sessionId,
+        studentId: event.row.entityId,
+        examType,
+        class: cls,
+        section,
+        overrideStatus: selected.overrideStatus,
+        nextClass: selected.nextClass,
+        nextSection: selected.nextSection,
+        overriddenAt: selected.overriddenAt,
+        audit: {
+          reason: event.details.reason,
+          actorId: event.row.actionBy!,
+          actorRole: event.row.actionByRole as "admin" | "support_staff",
+          createdAt: event.row.createdAt,
+        },
+        isProposal: true,
+      });
+    }
+    return [...overridesByStudent.values()].sort((left, right) => left.studentId - right.studentId);
   }
 
   async bulkPromoteStudents(schoolId: number, items: { studentId: number; nextClass: string; nextSection: string }[]): Promise<number> {
