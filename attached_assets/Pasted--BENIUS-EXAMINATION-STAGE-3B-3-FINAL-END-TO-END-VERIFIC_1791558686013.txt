@@ -1,0 +1,325 @@
+# BENIUS — EXAMINATION STAGE 3B-3
+## FINAL END-TO-END VERIFICATION
+### STRICT VERIFICATION ONLY — NO FEATURE DEVELOPMENT
+
+BENIUS is currently in DEVELOPMENT, not Production.
+
+Stage 3B-1 and Stage 3B-2 have been implemented.
+
+Stage 3B-2 reported:
+- Phase A safety gate PASS.
+- `resolvePromotionFinalDecision` implemented.
+- Web execution uses server-controlled `web-audited` mode.
+- Mobile retains its Teacher-led execution default.
+- Valid audited Promote/Retain proposals override the Teacher recommendation.
+- Invalid or stale proposals block execution.
+- Teacher recommendation is preserved.
+- Execution history and audit evidence are transactional.
+- Target Academic Session enrollment is prepared without changing current Student Registry placement.
+- 70/70 API tests passed.
+- 13/13 Web tests passed.
+- 1/1 disposable Development database integration test passed.
+- API/Web builds passed.
+- Mobile typecheck passed.
+- Existing API/Web typecheck diagnostics remained at baseline.
+- Authenticated Principal Exam Controller was not visually verified.
+- Academic Session activation database integration test was skipped because its fixture creates temporary DDL.
+
+The owner now requests Stage 3B-3 verification.
+
+## ABSOLUTE RESTRICTIONS
+
+THIS IS A VERIFICATION-ONLY STAGE.
+
+DO NOT:
+- Modify application source files.
+- Modify schemas or migrations.
+- Change permissions or configuration.
+- Fix bugs automatically.
+- Change existing Development academic records.
+- Change existing Student Registry records.
+- Change existing Academic Session status.
+- Activate or archive any real Academic Session.
+- Change Teacher locked ledgers.
+- Execute promotions for real Students.
+- Modify Mobile behavior.
+- Modify Fees & Payments.
+- Access Production.
+- Deploy the application.
+- Delete or modify the untracked `artifacts/api-server/uploads/schools/3/` directory.
+- Create database triggers/functions or temporary DDL on a shared Development database.
+
+If verification discovers a problem, document it and STOP. Do not implement a fix without approval.
+
+Disposable test records may be used only inside a clearly isolated test database, with no existing user or school records, and with guaranteed cleanup.
+
+If a safe isolated database is unavailable, perform read-only inspection and non-mutating tests only. Mark the database workflow NOT VERIFIED rather than risking existing data.
+
+# PART 1 — VERIFY CURRENT IMPLEMENTATION
+
+Inspect the actual current source code, not previous report summaries.
+
+Trace:
+
+1. Teacher promotion recommendation creation and locking.
+2. Examination completeness validation.
+3. Principal Exam Controller preview.
+4. Single Student audited override.
+5. Bulk audited overrides.
+6. Override edit and clear.
+7. Principal final-decision resolution.
+8. Web promotion execution.
+9. Shared promotion transaction.
+10. Target-session enrollment preparation.
+11. Academic History and audit persistence.
+12. Academic Session activation.
+13. Student Registry synchronization.
+14. Archived-session behavior.
+15. Mobile execution compatibility.
+
+For each step provide:
+- Frontend file/function.
+- Backend endpoint.
+- Service/storage function.
+- Academic Session validation.
+- Tenant/school validation.
+- Read/write behavior.
+- Evidence with file and line numbers.
+
+# PART 2 — VERIFY END-TO-END SCENARIOS
+
+Use isolated tests where safe.
+
+## Scenario A — Teacher Promote, Principal agrees
+
+Expected:
+- Teacher recommendation remains Promote.
+- No override is required.
+- Final execution is Promote.
+- Correct target-session enrollment is prepared.
+- History records the Teacher and final outcomes.
+
+## Scenario B — Teacher Promote, Principal Retain
+
+Expected:
+- Teacher recommendation remains Promote.
+- Principal enters Retain with a mandatory reason.
+- Audit captures authenticated actor and reason.
+- Final execution is Retain.
+- Target-session enrollment follows Retain rules.
+- Original Teacher ledger remains unchanged.
+
+## Scenario C — Teacher Retain, Principal Promote
+
+Expected:
+- Teacher recommendation remains Retain.
+- Principal enters Promote with a mandatory reason.
+- Final execution is Promote.
+- Correct next-class enrollment is prepared.
+- Original Teacher recommendation is preserved.
+
+## Scenario D — Proposal edited or cleared
+
+Expected:
+- Latest valid proposal determines the final outcome.
+- Clearing a proposal restores the locked Teacher recommendation as authority.
+- Audit history retains prior events.
+- Cleared proposals are not executed.
+
+## Scenario E — Invalid or incomplete results
+
+Expected:
+- Incomplete marks block promotion execution.
+- Missing or unlocked Teacher recommendations block execution.
+- Stale proposals block execution.
+- No target enrollment or execution history is created.
+
+## Scenario F — Concurrency and retries
+
+Expected:
+- Concurrent override edits and execution are safely serialized or rejected.
+- Duplicate execution cannot create duplicate enrollment.
+- Exact retries are idempotent.
+- Conflicting retries are rejected.
+- Failed audit persistence rolls back the entire execution.
+
+## Scenario G — School and Academic Session isolation
+
+Expected:
+- School A cannot access School B's promotion records.
+- Session A cannot execute using Session B's academic records.
+- Archived source sessions are read-only.
+- Target-session enrollment is created only for the correct school and session.
+- Student Registry data from another session is never used as a substitute for source enrollment.
+
+## Scenario H — Grace and legacy data
+
+Expected:
+- Existing Grace semantics remain unchanged.
+- No new Grace override can be created.
+- Legacy unaudited overrides cannot authorize execution.
+- Conflicting legacy rows are rejected rather than silently applied.
+
+## Scenario I — Mobile compatibility
+
+Expected:
+- Mobile execution remains Teacher-led.
+- Web-only proposal events do not change Mobile outcomes.
+- Mobile routes, payloads and permissions remain unchanged.
+- Shared execution changes have not introduced Mobile regressions.
+
+# PART 3 — VERIFY SESSION ACTIVATION
+
+This is a critical verification.
+
+Confirm that promotion execution itself DOES NOT change:
+- Student Registry class.
+- Student Registry section.
+- Student Registry roll number.
+- Active Academic Session.
+
+Confirm that activation of the next Academic Session is the only intended step that synchronizes prepared enrollment placement to the current Student Registry.
+
+Verify:
+1. Prepared Promote enrollment is applied correctly on activation.
+2. Prepared Retain enrollment is applied correctly on activation.
+3. Roll number is taken from valid target-session enrollment logic.
+4. Archived/source-session enrollment and examination records remain unchanged.
+5. Activation does not recalculate or reinterpret the historical Teacher recommendation or Principal final decision.
+6. Repeated activation cannot duplicate or corrupt placement.
+7. School isolation remains enforced.
+8. Failure midway through activation rolls back consistently.
+
+Do not activate a real session.
+
+The previous activation database integration test was skipped because it creates temporary DDL.
+
+First determine whether activation can be tested safely in a fully isolated disposable database.
+
+If yes, execute the relevant integration test there and report evidence.
+
+If not, do not run the unsafe fixture. Mark activation database integration as NOT VERIFIED and explain exactly why.
+
+Do not weaken the test to make it pass.
+
+# PART 4 — PRINCIPAL WEB UI VERIFICATION
+
+Inspect the actual Exam Controller interface.
+
+Verify that it clearly displays:
+- Selected Academic Session.
+- Examination term.
+- Teacher recommendation.
+- Principal proposal.
+- Override reason.
+- Override actor where authorized.
+- Readiness status.
+- Final executed outcome.
+- Whether an override was applied.
+- Correct disabled/error states for invalid execution.
+
+Check single and bulk override workflows, preview refresh, and execution confirmation.
+
+If an authenticated disposable test session is safely available, verify the actual Principal UI using it.
+
+Do not create or alter real credentials.
+
+Do not bypass authentication.
+
+If only the login page is accessible, mark authenticated UI verification NOT VERIFIED.
+
+Source inspection and component tests must not be described as successful authenticated browser verification.
+
+# PART 5 — TESTS AND BUILD VERIFICATION
+
+Run non-destructive tests for:
+
+- Stage 1 promotion logic.
+- Stage 2B examination calculation integration.
+- Stage 3B-1 proposal lifecycle.
+- Stage 3B-2 final-decision execution.
+- Web preview.
+- School/session authorization.
+- Atomic audit history.
+- Concurrent execution.
+- Mobile Teacher-led compatibility.
+- Academic Session activation and Registry placement.
+
+Run:
+- Relevant focused API tests.
+- Relevant Web tests.
+- Safe isolated database tests.
+- API build.
+- Web build.
+- Mobile typecheck.
+- API/Web typecheck comparison against existing baseline.
+
+Do not modify fixtures or source code during this stage.
+
+If a test fails, report the failure without fixing it.
+
+Distinguish:
+- PASS
+- FAIL
+- NOT RUN
+- NOT VERIFIED
+
+Do not call an unexecuted test PASS.
+
+# PART 6 — DATA INTEGRITY CHECK
+
+Using source inspection and safe isolated testing, confirm:
+
+- Original Teacher recommendations remain immutable.
+- Final decisions have actor/reason evidence.
+- Promotion history stores both Teacher and final decisions.
+- Target enrollments are correctly scoped.
+- No duplicate promotion history is created.
+- No existing Student Registry records were modified.
+- No historical Academic Session records were rewritten.
+- Existing Grace and legacy records remain protected.
+- Student examination APIs do not expose internal override audit details.
+- No financial module behavior is affected.
+
+If any assertion cannot be proven, mark it NOT VERIFIED.
+
+# REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall Stage 3B-3 status: PASS / NEEDS CHANGES / BLOCKED / PARTIALLY VERIFIED.
+2. End-to-end flow map with exact source file and line references.
+3. Scenario A result.
+4. Scenario B result.
+5. Scenario C result.
+6. Scenario D result.
+7. Scenario E result.
+8. Scenario F result.
+9. Scenario G result.
+10. Scenario H result.
+11. Scenario I result.
+12. Academic Session activation verification result.
+13. Authenticated Principal UI verification result.
+14. API test counts and failures.
+15. Web test counts and failures.
+16. Database integration test counts and skipped tests.
+17. API/Web build results.
+18. Mobile typecheck result.
+19. API/Web typecheck baseline comparison.
+20. Tenant and Academic Session isolation evidence.
+21. Historical Teacher decision preservation evidence.
+22. Final-decision audit evidence.
+23. Target enrollment and Registry activation evidence.
+24. Files changed: expected NONE.
+25. Database/schema/configuration changes: expected NONE outside isolated disposable test fixtures.
+26. Existing Development records changed: expected NO.
+27. Production accessed: expected NO.
+28. Deployment performed: expected NO.
+29. Fees & Payments modified: expected NO.
+30. Mobile-specific files modified: expected NO.
+31. Untracked uploads directory modified: expected NO.
+32. Remaining gaps, risks and owner decisions.
+
+Do not claim the entire workflow is fully verified if authenticated UI or activation integration tests were not completed.
+
+STOP after producing the verification report. Wait for owner approval before making any changes.
