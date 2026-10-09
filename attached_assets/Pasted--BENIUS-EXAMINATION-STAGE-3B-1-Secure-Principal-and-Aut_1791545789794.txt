@@ -1,0 +1,282 @@
+# BENIUS EXAMINATION — STAGE 3B-1
+## Secure Principal and Authorized Support Staff Overrides
+### CONTROLLED IMPLEMENTATION — DO NOT CONNECT OVERRIDES TO EXECUTION YET
+
+Stage 3A read-only audit is complete.
+
+The owner has explicitly approved these business rules:
+
+1. Principal/Admin and Support Staff with the Exam Controller module permission may make final promotion decisions.
+2. Permitted new override outcomes are Promote and Retain only.
+3. Grace behavior must remain unchanged pending a separate audit.
+4. Incomplete results cannot bypass readiness requirements.
+5. A valid locked Teacher recommendation is mandatory.
+6. Every new or changed override requires a non-empty reason.
+7. Override audit must identify the authenticated actor, reason, original Teacher recommendation, selected override and time.
+8. Preserve school isolation and selected Academic Session isolation.
+9. Preserve promotion execution's target-enrollment-only behavior.
+10. Preserve Registry synchronization exclusively at target-session activation.
+11. Mobile-specific behavior must remain unchanged.
+
+BENIUS is in DEVELOPMENT.
+
+## 1. IMPLEMENTATION BOUNDARY
+
+Implement only the secure Web Principal Exam Controller override workflow and its necessary backend support.
+
+DO NOT:
+
+- Connect overrides to promotion execution yet.
+- Change `executePromotionTransaction` behavior.
+- Change Teacher ledger Save/Lock behavior.
+- Change Teacher Add Marks.
+- Change examination calculations.
+- Change grading policies.
+- Change marks publication.
+- Change Academic Session activation.
+- Change Student Registry placement.
+- Change Mobile frontend or Mobile-specific endpoints.
+- Deploy.
+- Access Production.
+
+If existing override storage is shared with Mobile, inspect the impact before changing any contract.
+
+If the approved Web-only security changes cannot be isolated safely from Mobile, STOP and report the blocker.
+
+## 2. AUTHORIZATION
+
+For Web override create/update/delete operations, allow only:
+
+- Authenticated Principal/Admin belonging to the school.
+- Authenticated, active Support Staff belonging to the school with the Exam Controller module grant.
+
+Do not authorize Support Staff merely because they are authenticated.
+
+Enforce permission on the server, not only through the UI.
+
+Preserve the existing role permission model.
+
+Do not allow a client-supplied actor ID or School ID to override the authenticated identity.
+
+## 3. EXACT ACADEMIC SESSION SCOPE
+
+Every override must be scoped to:
+
+- Authenticated School ID.
+- Explicit selected Academic Session ID.
+- Examination term.
+- Student ID.
+- Source Class.
+- Source Section.
+
+Validate the Student's exact active enrollment in that selected session.
+
+Require an active writable source session.
+
+Reject cross-school and cross-session mutations.
+
+Reject archived-session writes.
+
+Never use an implicit current-session fallback.
+
+## 4. OVERRIDE READINESS REQUIREMENTS
+
+Before accepting a new or changed override, verify:
+
+- Student is eligible within the selected-session cohort.
+- Applicable examination results are complete.
+- All required subjects/components are accounted for.
+- Valid Teacher recommendation exists.
+- Teacher ledger is locked.
+- Teacher decision is not stale or invalid.
+- Student has not already been executed.
+- Requested override is Promote or Retain.
+- Destination, if required, is valid for school configuration and intended target-session preparation.
+
+Do not allow an override to turn incomplete marks into a completed result.
+
+Do not bypass missing marks, missing ledger, invalid ledger or archived-session restrictions.
+
+Reuse existing readiness helpers and authoritative calculation engine.
+
+If target-session destination cannot be validated safely at override-save time, explicitly distinguish a saved proposed outcome from an executable final destination and require destination validation during Stage 3B-2. Do not label an unvalidated destination as execution-ready.
+
+## 5. GRACE SAFETY
+
+The existing UI may contain Grace.
+
+Do not reinterpret Grace as Promote or Retain.
+
+Do not silently delete or convert existing Grace records.
+
+Do not introduce new Grace execution behavior.
+
+If removing Grace from the new override selection would interfere with existing Grace records or Mobile behavior, STOP and report.
+
+Preserve existing Grace history.
+
+## 6. MANDATORY REASON AND AUDIT
+
+Require a meaningful, non-empty reason for every newly created or changed Web override.
+
+Reject blank or whitespace-only reasons.
+
+Derive the actor from the authenticated session.
+
+The audit must preserve:
+
+- School ID.
+- Academic Session ID.
+- Student ID.
+- Examination term.
+- Original Teacher recommendation.
+- Previous override, if any.
+- New override.
+- Reason.
+- Actor ID and role.
+- Timestamp in the existing storage format; display in IST.
+
+Do not overwrite the Teacher's locked recommendation.
+
+Do not fabricate historical actor or reason information for legacy overrides.
+
+Prefer existing audit infrastructure if it can provide durable, queryable records.
+
+Critical requirement:
+
+An override must not be considered successfully saved if its required audit record fails to persist.
+
+Use an atomic database transaction for the override and its required audit record.
+
+If the existing audit system cannot provide this guarantee, STOP and report the smallest necessary schema/storage adjustment before implementing a weaker alternative.
+
+Do not rely on the existing non-blocking post-transaction audit pipeline for mandatory override evidence.
+
+## 7. EXECUTED DECISION IMMUTABILITY
+
+After the Student's promotion/retention has been executed:
+
+- Reject override changes.
+- Reject override deletion.
+- Preserve existing execution history.
+- Do not rewrite historical Teacher recommendations.
+- Do not rewrite previously prepared target enrollments.
+
+Do not introduce a reversal workflow in this stage.
+
+## 8. WEB UI
+
+Keep the existing Principal Exam Controller screen.
+
+Make only the smallest necessary changes:
+
+- Permit Promote/Retain override selection for eligible Students.
+- Require an override reason.
+- Show clear validation errors.
+- Disable override editing for executed Students.
+- Display the saved override distinctly from the Teacher recommendation.
+- Clearly label an override as NOT YET EXECUTED.
+
+Do not redesign the module.
+
+Do not claim that saving an override has promoted or retained a Student.
+
+Do not change the execution button or its payload in this stage.
+
+## 9. LEGACY OVERRIDES
+
+Audit existing override records that have no actor/reason.
+
+Do not invent missing audit information.
+
+Do not automatically migrate, delete or execute them.
+
+Report how Stage 3B-2 should handle legacy overrides safely.
+
+The safe default is that unaudited legacy overrides must not silently become executable Principal-final decisions.
+
+## 10. TESTS
+
+Add focused tests for:
+
+1. Principal/Admin authorized.
+2. Authorized Support Staff accepted.
+3. Support Staff without module grant rejected.
+4. Inactive Support Staff rejected.
+5. Unauthenticated request rejected.
+6. Cross-school request rejected.
+7. Cross-session request rejected.
+8. Archived-session override rejected.
+9. Student outside exact-session cohort rejected.
+10. Missing Teacher ledger rejected.
+11. Unlocked Teacher ledger rejected.
+12. Stale Teacher decision rejected.
+13. Incomplete result rejected.
+14. Valid Promote override accepted.
+15. Valid Retain override accepted.
+16. Blank reason rejected.
+17. Actor derived from authentication.
+18. Override and audit saved atomically.
+19. Audit failure rolls back override.
+20. Executed Student override mutation rejected.
+21. Existing Grace behavior preserved.
+22. Legacy overrides remain unexecuted.
+23. Teacher ledger unchanged.
+24. Promotion execution behavior unchanged.
+25. Mobile-specific behavior unchanged.
+
+Use isolated fixtures.
+
+Do not mutate existing Development academic records.
+
+## 11. VERIFICATION
+
+Run focused tests and relevant existing regression tests.
+
+Run API and Web builds.
+
+Compare typecheck diagnostics against the existing baseline.
+
+Verify Mobile compatibility by source inspection and focused tests where possible.
+
+Do not run the known outdated Promotion database test without first repairing its isolated fixtures.
+
+Do not change existing Development school records.
+
+## 12. REQUIRED REPORT
+
+Provide:
+
+1. PASS / NEEDS CHANGES / BLOCKED.
+2. Authorization implementation.
+3. Readiness checks.
+4. Reason validation.
+5. Atomic audit persistence.
+6. Executed-decision immutability.
+7. Grace preservation.
+8. Legacy override handling.
+9. Exact files changed.
+10. Schema changes.
+11. Test results.
+12. Build results.
+13. Typecheck comparison.
+14. Tenant/session isolation.
+15. Mobile compatibility.
+16. Teacher ledger preservation.
+17. Promotion execution unchanged: YES/NO.
+18. Existing academic records changed: YES/NO.
+19. Production accessed: YES/NO.
+20. Deployment performed: YES/NO.
+21. Remaining risks and Stage 3B-2 prerequisites.
+
+### FINAL INSTRUCTION
+
+Implement Stage 3B-1 only.
+
+Do not connect overrides to execution.
+
+Do not modify Mobile-specific behavior.
+
+Do not deploy.
+
+If mandatory audit durability, Grace preservation, or Mobile compatibility cannot be guaranteed, STOP and request owner approval before proceeding.
