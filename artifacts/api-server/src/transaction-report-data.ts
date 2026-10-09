@@ -8,6 +8,15 @@
  */
 import { normalizePaymentMethod } from "@shared/payment-method";
 import { dateOnlyInIST, instantEpochMillis } from "@shared/ist-time";
+import {
+  HISTORICAL_PLACEMENT_UNAVAILABLE,
+  paymentSideSessionNotice,
+} from "./historical-fee-placement";
+import {
+  historicalFeePlacementJoin,
+  historicalPlacementClassFilter,
+  historicalPlacementSectionFilter,
+} from "./historical-fee-placement-sql";
 /**
  *
  * Key design decisions
@@ -99,8 +108,8 @@ export async function buildTransactionRows(
     receiptNumber:     sql`COALESCE(fr.receipt_number, '')`,
     studentName:       sql`COALESCE(s.name, '')`,
     dsid:              sql`COALESCE(s.digital_student_id, '')`,
-    class:             sql`s.class`,
-    section:           sql`s.section`,
+    class:             historicalPlacementClassFilter,
+    section:           historicalPlacementSectionFilter,
     feeName:           sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
     feeType:           sql`fr.fee_type`,
     feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
@@ -153,6 +162,7 @@ export async function buildTransactionRows(
     SELECT fr.id AS fr_id
     FROM fee_records fr
     LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+    ${historicalFeePlacementJoin}
     LEFT JOIN LATERAL (
       SELECT fs.name AS fee_name
       FROM fee_structures fs
@@ -327,18 +337,21 @@ export async function buildTransactionRows(
       pa.rzp_created_at,
       pa.created_at,
       pa.updated_at,
+      pa.session_id        AS payment_session_id,
       -- fee record
       fr.invoice_number    AS fr_invoice_number,
       fr.fee_type          AS fr_fee_type,
       fr.student_id        AS fr_student_id,
+      fr.session_id        AS fee_session_id,
       COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fr_fee_name,
       -- student
       s.name               AS student_name,
       s.digital_student_id AS student_id,
-      s.class              AS class,
-      s.section            AS section,
+      historical_placement.class_name AS class,
+      historical_placement.section_name AS section,
       -- payment_record link (for dedup + method/reference/receipt coalesce)
       pr.id                AS linked_pr_id,
+      pr.session_id        AS pr_session_id,
       pr.reference_number  AS pr_reference_number,
       pr.payment_method    AS pr_payment_method,
        pr.receipt_number    AS pr_receipt_number,
@@ -346,6 +359,7 @@ export async function buildTransactionRows(
     FROM payment_attempts pa
     JOIN fee_records fr        ON fr.id = pa.fee_record_id AND fr.school_id = ${schoolId}
     LEFT JOIN students s       ON s.id = fr.student_id AND s.school_id = ${schoolId}
+    ${historicalFeePlacementJoin}
     LEFT JOIN LATERAL (
       SELECT fs.name AS fee_name
       FROM fee_structures fs
@@ -464,14 +478,21 @@ export async function buildTransactionRows(
     // invoice receipt (a failed/cancelled attempt must not display a paid
     // invoice's receipt number).
     const receiptNumber = row.receipt_number ?? row.pr_receipt_number ?? null;
+    const placementWarnings = [
+      paymentSideSessionNotice("payment attempt", row.payment_session_id, row.fee_session_id),
+      row.linked_pr_id == null
+        ? null
+        : paymentSideSessionNotice("payment record", row.pr_session_id, row.fee_session_id),
+    ].filter((warning): warning is string => warning != null);
 
     txRows.push({
       id:               `pa:${row.id}`,
       attempt_number:   row.attempt_number != null ? Number(row.attempt_number) : null,
       student_name:     row.student_name   ?? null,
       student_id:       row.student_id     ?? null,
-      class:            row.class          ?? null,
-      section:          row.section        ?? null,
+      class:            row.class          ?? HISTORICAL_PLACEMENT_UNAVAILABLE,
+      section:          row.class == null ? null : row.section ?? null,
+      placement_warning: placementWarnings.length ? placementWarnings.join(" ") : null,
       invoice_number:   row.fr_invoice_number  ?? null,
       receipt_number:   receiptNumber,
       fee_name:         row.fr_fee_name    ?? null,
@@ -507,18 +528,21 @@ export async function buildTransactionRows(
       pr.reference_number,
       pr.gateway_status,
       pr.fee_record_id,
+      pr.session_id         AS payment_session_id,
       -- fee record
       fr.invoice_number    AS fr_invoice_number,
       fr.fee_type          AS fr_fee_type,
+      fr.session_id        AS fee_session_id,
       COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fr_fee_name,
       -- student
       s.name               AS student_name,
       s.digital_student_id AS student_id,
-      s.class              AS class,
-      s.section            AS section
+      historical_placement.class_name AS class,
+      historical_placement.section_name AS section
     FROM payment_records pr
     JOIN fee_records fr        ON fr.id = pr.fee_record_id AND fr.school_id = ${schoolId}
     LEFT JOIN students s       ON s.id = fr.student_id AND s.school_id = ${schoolId}
+    ${historicalFeePlacementJoin}
     LEFT JOIN LATERAL (
       SELECT fs.name AS fee_name
       FROM fee_structures fs
@@ -575,8 +599,13 @@ export async function buildTransactionRows(
       attempt_number:   null,
       student_name:     row.student_name   ?? null,
       student_id:       row.student_id     ?? null,
-      class:            row.class          ?? null,
-      section:          row.section        ?? null,
+      class:            row.class          ?? HISTORICAL_PLACEMENT_UNAVAILABLE,
+      section:          row.class == null ? null : row.section ?? null,
+      placement_warning: paymentSideSessionNotice(
+        "payment record",
+        row.payment_session_id,
+        row.fee_session_id,
+      ),
       invoice_number:   row.fr_invoice_number ?? null,
       // Fallback PR rows may use their own receipt; never the invoice receipt.
       receipt_number:   row.pr_receipt_number ?? null,

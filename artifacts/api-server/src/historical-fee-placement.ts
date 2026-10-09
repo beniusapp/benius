@@ -146,3 +146,27 @@ export function paymentFeeSessionNotice(
         : `ID ${value}`;
   return `Session mismatch: payment record session ${formatSession(paymentSession)} differs from invoice session ${formatSession(feeSession)}. Placement is based on the invoice session; no records were changed.`;
 }
+
+export function paymentSideSessionNotice(
+  paymentSide: "payment attempt" | "payment record",
+  paymentSessionId: unknown,
+  feeSessionId: unknown,
+): string | null {
+  const paymentSession = normalizedSessionId(paymentSessionId);
+  const feeSession = normalizedSessionId(feeSessionId);
+  if (
+    paymentSession !== undefined
+    && feeSession !== undefined
+    && paymentSession === feeSession
+  ) {
+    return null;
+  }
+
+  const formatSession = (value: number | null | undefined) =>
+    value === undefined
+      ? "invalid"
+      : value == null
+        ? "unassigned (NULL)"
+        : `ID ${value}`;
+  return `Session mismatch: ${paymentSide} session ${formatSession(paymentSession)} differs from invoice session ${formatSession(feeSession)}. Placement uses the invoice session; no records were changed.`;
+}

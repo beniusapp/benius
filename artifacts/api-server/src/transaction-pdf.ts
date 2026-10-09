@@ -235,6 +235,7 @@ export interface TxRow {
   student_id:         string | null;   // DSID
   class:              string | null;
   section:            string | null;
+  placement_warning?: string | null;
   invoice_number:     string | null;
   receipt_number:     string | null;
   fee_name:           string | null;
@@ -360,10 +361,16 @@ export function getCellLines(row: TxRow, key: string): string[] {
     case "class": {
       const hasCls = row.class != null && String(row.class) !== "";
       const hasSec = row.section != null && String(row.section) !== "";
-      if (hasCls && hasSec) return [`${row.class}-${row.section}`];
-      if (hasCls)           return [String(row.class)];
-      if (hasSec)           return [String(row.section)];
-      return [EM];
+      const lines = hasCls && hasSec
+        ? [`${row.class}-${row.section}`]
+        : hasCls
+          ? [String(row.class)]
+          : hasSec
+            ? [String(row.section)]
+            : [EM];
+      return row.placement_warning
+        ? [...lines, `Warning: ${row.placement_warning}`]
+        : lines;
     }
     case "inv_rec": {
       const inv = row.invoice_number ? `${row.invoice_number}` : EM;

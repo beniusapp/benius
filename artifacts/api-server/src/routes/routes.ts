@@ -61,6 +61,13 @@ import {
   feePlacementForDisplay,
   paymentFeeSessionNotice,
 } from "../historical-fee-placement";
+import {
+  historicalFeePlacementJoin,
+  historicalPlacementClassDisplay,
+  historicalPlacementClassFilter,
+  historicalPlacementSectionDisplay,
+  historicalPlacementSectionFilter,
+} from "../historical-fee-placement-sql";
 import { resolveStudentExaminationSession } from "../student-examination-session";
 import {
   examinationResultsErrorMessage,
@@ -4743,8 +4750,8 @@ export async function registerRoutes(
       // when several structures share a fee_type.
       const rows = (await db.execute(sql`
         SELECT DISTINCT
-          s.class                                        AS class,
-          s.section                                      AS section,
+          historical_placement.class_name               AS class,
+          historical_placement.section_name             AS section,
           COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type                                    AS fee_type,
           fr.frequency                                   AS frequency,
@@ -4755,6 +4762,7 @@ export async function registerRoutes(
           lp.raw_payment_method                          AS payment_method
         FROM fee_records fr
         LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        ${historicalFeePlacementJoin}
         LEFT JOIN LATERAL (
           SELECT fs.name AS fee_name
           FROM fee_structures fs
@@ -4862,8 +4870,8 @@ export async function registerRoutes(
       receiptNumber: sql`COALESCE(fr.receipt_number, '')`,
       studentName:   sql`COALESCE(s.name, '')`,
       dsid:          sql`COALESCE(s.digital_student_id, '')`,
-      class:         sql`s.class`,
-      section:       sql`s.section`,
+      class:         historicalPlacementClassFilter,
+      section:       historicalPlacementSectionFilter,
       feeName:       sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
       feeType:       sql`fr.fee_type`,
       feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
@@ -4895,6 +4903,7 @@ export async function registerRoutes(
         LIMIT 1
       ) structure ON true
     `;
+    const historicalPlacementJoin = sql`${historicalFeePlacementJoin}`;
     const ledgerPaymentJoin = sql`
       LEFT JOIN LATERAL (
         SELECT pr.payment_method AS raw_payment_method,
@@ -4913,6 +4922,7 @@ export async function registerRoutes(
       SELECT COUNT(*)::int AS total
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${historicalPlacementJoin}
       ${structureJoin}
       ${ledgerPaymentJoin}
       WHERE ${whereClause}
@@ -4955,12 +4965,13 @@ export async function registerRoutes(
         structure.fee_name AS "__feeName",
         structure.late_fee_config AS "__lateFeeConfig",
         s.name AS "__studentName",
-        s.class AS "__studentClass",
-        s.section AS "__studentSection",
+        ${historicalPlacementClassDisplay} AS "__studentClass",
+        ${historicalPlacementSectionDisplay} AS "__studentSection",
         s.digital_student_id AS "__studentDigitalStudentId",
         ledger_payment.raw_payment_method AS "__paymentMethod"
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${historicalPlacementJoin}
       ${structureJoin}
       ${ledgerPaymentJoin}
       WHERE ${whereClause}

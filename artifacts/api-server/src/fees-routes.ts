@@ -58,6 +58,13 @@ import {
   paymentFeeSessionNotice,
 } from "./historical-fee-placement";
 import {
+  historicalFeePlacementJoin,
+  historicalPlacementClassDisplay,
+  historicalPlacementClassFilter,
+  historicalPlacementSectionDisplay,
+  historicalPlacementSectionFilter,
+} from "./historical-fee-placement-sql";
+import {
   buildFinancialAnalytics,
   isValidDate,
   daysBetween,
@@ -5250,8 +5257,8 @@ export function registerFeesRoutes(app: Express) {
       receiptNumber:     sql`COALESCE(fr.receipt_number, '')`,
       studentName:       sql`COALESCE(s.name, '')`,
       dsid:              sql`COALESCE(s.digital_student_id, '')`,
-      class:             sql`s.class`,
-      section:           sql`s.section`,
+      class:             historicalPlacementClassFilter,
+      section:           historicalPlacementSectionFilter,
       feeName:           sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
       feeType:           sql`fr.fee_type`,
       feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
@@ -5298,8 +5305,8 @@ export function registerFeesRoutes(app: Express) {
         fr.receipt_number    AS receipt_number,
         s.name               AS student_name,
         s.digital_student_id AS student_id,
-        s.class              AS class,
-        s.section            AS section,
+        ${historicalPlacementClassDisplay} AS class,
+        ${historicalPlacementSectionDisplay} AS section,
         COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
         fr.fee_type          AS fee_type,
         fr.frequency         AS frequency,
@@ -5322,6 +5329,7 @@ export function registerFeesRoutes(app: Express) {
         fr.fee_period_end    AS fee_period_end
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${historicalFeePlacementJoin}
       LEFT JOIN LATERAL (
         SELECT fs.name AS fee_name
         FROM fee_structures fs
@@ -5504,8 +5512,8 @@ export function registerFeesRoutes(app: Express) {
         receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
         studentName:    sql`COALESCE(s.name, '')`,
         dsid:           sql`COALESCE(s.digital_student_id, '')`,
-        class:          sql`s.class`,
-        section:        sql`s.section`,
+        class:          historicalPlacementClassFilter,
+        section:        historicalPlacementSectionFilter,
         feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
         feeType:        sql`fr.fee_type`,
         feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
@@ -5537,8 +5545,8 @@ export function registerFeesRoutes(app: Express) {
           fr.receipt_number    AS receipt_number,
           s.name               AS student_name,
           s.digital_student_id AS student_id,
-          s.class              AS class,
-          s.section            AS section,
+          ${historicalPlacementClassDisplay} AS class,
+          ${historicalPlacementSectionDisplay} AS section,
           COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
           fr.frequency         AS frequency,
@@ -5561,6 +5569,7 @@ export function registerFeesRoutes(app: Express) {
           fr.fee_period_end    AS fee_period_end
         FROM fee_records fr
         LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        ${historicalFeePlacementJoin}
         LEFT JOIN LATERAL (
           SELECT fs.name AS fee_name
           FROM fee_structures fs
@@ -5697,8 +5706,8 @@ export function registerFeesRoutes(app: Express) {
         receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
         studentName:    sql`COALESCE(s.name, '')`,
         dsid:           sql`COALESCE(s.digital_student_id, '')`,
-        class:          sql`s.class`,
-        section:        sql`s.section`,
+        class:          historicalPlacementClassFilter,
+        section:        historicalPlacementSectionFilter,
         feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
         feeType:        sql`fr.fee_type`,
         feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
@@ -5730,8 +5739,8 @@ export function registerFeesRoutes(app: Express) {
           fr.receipt_number    AS receipt_number,
           s.name               AS student_name,
           s.digital_student_id AS student_id,
-          s.class              AS class,
-          s.section            AS section,
+          ${historicalPlacementClassDisplay} AS class,
+          ${historicalPlacementSectionDisplay} AS section,
           COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
           fr.frequency         AS frequency,
@@ -5754,6 +5763,7 @@ export function registerFeesRoutes(app: Express) {
           fr.fee_period_end    AS fee_period_end
         FROM fee_records fr
         LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        ${historicalFeePlacementJoin}
         LEFT JOIN LATERAL (
           SELECT fs.name AS fee_name
           FROM fee_structures fs

@@ -24,4 +24,4 @@
 - [Support Staff scoped permissions](support-staff-scoped-permissions.md) — Approval/Leave children authorize independently; history is read-only; legacy Staff-management grants never authorize.
 - [Support Staff dashboard shell](support-staff-dashboard-shell.md) — omit the full summary bar; Removed History is read-only Teacher Registry base access inside the shell.
 - [Homework review timestamp precision](homework-review-timestamp-precision.md) — preserve PostgreSQL sub-millisecond precision in optimistic review tokens; JavaScript Date round-trips only milliseconds.
-- [Historical fee placement](historical-fee-placement.md) — fee documents and transaction details use exact-session enrollment; unresolved placement is explicit and mismatches are warned, never repaired.
+- [Historical fee placement](historical-fee-placement.md) — approved fee lists and exports use exact-session enrollment; unresolved placement is explicit and mismatches are warned, never repaired.
