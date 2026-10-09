@@ -78,6 +78,11 @@ import {
 
 import { renderLedgerPdf, type LedgerRow } from "./ledger-pdf";
 import { resolveLedgerPdfLogo } from "./ledger-pdf-logo";
+import {
+  hasEveryRequestedLedgerPdfId,
+  validateLedgerPdfSelection,
+} from "./ledger-pdf-selection";
+import { buildLedgerPdfAuthorizedWhere } from "./ledger-pdf-selection-sql";
 import { renderTransactionPdf } from "./transaction-pdf";
 import { loadTransactionDetailData } from "./transaction-detail-data";
 import {
@@ -5667,32 +5672,18 @@ export function registerFeesRoutes(app: Express) {
     if (sessionFilter === undefined) return;
     if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
-    // Extract selection predicates (typed integer arrays — unchanged logic).
-    const {
-      selectAllMatching: rawSelectAll,
-      selectedIds:       rawSelectedIds,
-      excludedIds:       rawExcludedIds,
-    } = req.body as {
-      selectAllMatching?: boolean; selectedIds?: number[]; excludedIds?: number[];
-    };
+    const selectionResult = validateLedgerPdfSelection(req.body);
+    if (!selectionResult.ok) {
+      return res.status(400).json({ message: selectionResult.message });
+    }
+    const { selectAllMatching, selectedIds, excludedIds } = selectionResult.selection;
 
-    // Sanitize — only accept valid integer arrays; ignore anything else.
-    const selectAllMatching = rawSelectAll === true;
-    const selectedIds = Array.isArray(rawSelectedIds)
-      ? rawSelectedIds.filter(x => Number.isInteger(x) && x > 0)
-      : [];
-    const excludedIds = Array.isArray(rawExcludedIds)
-      ? rawExcludedIds.filter(x => Number.isInteger(x) && x > 0)
-      : [];
-
-    // PostgreSQL's ANY/ALL operators require a PostgreSQL array expression on
-    // the right-hand side. IDs above are validated positive integers before
-    // constructing the project's existing typed ARRAY[...]::int[] expression.
+    // Keep ID arrays as one bound PostgreSQL array parameter for ANY/ALL.
     const selectedIdsArray = selectedIds.length
-      ? sql.raw(`ARRAY[${selectedIds.join(",")}]::int[]`)
+      ? sql`${sql.param(selectedIds)}::int[]`
       : null;
     const excludedIdsArray = excludedIds.length
-      ? sql.raw(`ARRAY[${excludedIds.join(",")}]::int[]`)
+      ? sql`${sql.param(excludedIds)}::int[]`
       : null;
 
     // Normalize ledger filters from body (same old-singular-field compat).
@@ -5723,16 +5714,21 @@ export function registerFeesRoutes(app: Express) {
         feeRecordId: sql`fr.id`,
       });
       if (ledgerPostPaymentDatePredicate) ledgerPostPreds.push(ledgerPostPaymentDatePredicate);
-      const ledgerPostSessionCond = sql`AND fr.session_id = ${sessionFilter}`;
-      const ledgerPostExtraWhere = ledgerPostPreds.length > 0
-        ? sql`AND ${sql.join(ledgerPostPreds, sql` AND `)}`
-        : sql``;
+      const ledgerPostAuthorizedWhere = buildLedgerPdfAuthorizedWhere({
+        schoolId,
+        sessionId: sessionFilter,
+        filterPredicates: ledgerPostPreds,
+        selectAllMatching,
+        selectedIdsArray,
+        excludedIdsArray,
+      });
 
       // structure → deterministic first fee-structure name (no one-to-many duplication)
       // p         → aggregated payments for total_paid / outstanding (UNCHANGED)
       // lp        → latest NON-auto-recorded payment for method/reference display + filter
       const rows = await db.execute(sql`
         SELECT
+          fr.id                 AS ledger_selection_id,
           fr.invoice_number    AS invoice_number,
           fr.receipt_number    AS receipt_number,
           s.name               AS student_name,
@@ -5788,13 +5784,29 @@ export function registerFeesRoutes(app: Express) {
           ORDER BY pr.created_at DESC, pr.id DESC
           LIMIT 1
         ) lp ON true
-        WHERE fr.school_id = ${schoolId}
-          ${ledgerPostSessionCond}
-          ${ledgerPostExtraWhere}
-          ${!selectAllMatching && selectedIdsArray ? sql`AND fr.id = ANY(${selectedIdsArray})` : sql``}
-          ${selectAllMatching  && excludedIdsArray ? sql`AND fr.id != ALL(${excludedIdsArray})` : sql``}
+        WHERE ${ledgerPostAuthorizedWhere}
         ORDER BY s.class, s.name, fr.due_date
       `);
+
+      const ledgerPostRows = rows.rows as Array<Record<string, unknown>>;
+      if (
+        !selectAllMatching
+        && !hasEveryRequestedLedgerPdfId(
+          selectedIds,
+          ledgerPostRows.map((row) => row.ledger_selection_id),
+        )
+      ) {
+        return res.status(400).json({
+          message: "One or more selected invoices are unavailable under the current school, Academic Session, or filters. Clear the selection and choose invoices from the current filtered results.",
+        });
+      }
+
+      // The validation-only key is not part of the report-row projection.
+      const ledgerPdfRows = ledgerPostRows.map((row) => {
+        const reportRow = { ...row };
+        delete reportRow.ledger_selection_id;
+        return reportRow as unknown as LedgerRow;
+      });
 
       const schoolRow = (await db.execute(sql`
         SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
@@ -5831,7 +5843,7 @@ export function registerFeesRoutes(app: Express) {
           dateFrom: ledgerPostFilters.dueDateFrom  || undefined,
           dateTo:   ledgerPostFilters.dueDateTo    || undefined,
         },
-        rows: (rows.rows as any[]) as LedgerRow[],
+        rows: ledgerPdfRows,
         generatedAtIST: formatInstantIST(new Date()),
       });
 

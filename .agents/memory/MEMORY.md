@@ -27,3 +27,4 @@
 - [Historical fee placement](historical-fee-placement.md) — approved fee lists and exports use exact-session enrollment; unresolved placement is explicit and mismatches are warned, never repaired.
 - [Disposable fee-test PostgreSQL](isolated-fee-postgres.md) — verify private cluster settings without elevating the test role; keep local startup and checks in one shell execution.
 - [Ledger PDF image validation](ledger-pdf-logo-validation.md) — Sharp may tolerate truncated images; validate PNG/JPEG structure before passing stored logos to PDFKit.
+- [PostgreSQL ID array binding](drizzle-postgres-array-bindings.md) — use one bound array parameter with `ANY`/`ALL`; direct Drizzle array interpolation expands into a row constructor.

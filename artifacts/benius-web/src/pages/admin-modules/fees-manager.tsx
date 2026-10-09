@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef, useReducer } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -35,6 +35,13 @@ import {
   type LedgerFilters, emptyLedgerFilters, ledgerFiltersToSearchParams,
   ledgerFiltersToBody, countActiveLedgerFilters,
 } from "@shared/ledger-filters";
+import {
+  createLedgerPdfSelectionState,
+  ledgerPdfErrorMessage,
+  ledgerPdfExportMode,
+  reduceLedgerPdfSelectionState,
+  type LedgerPdfSelectionUpdate,
+} from "@/lib/ledger-pdf-selection-state";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -2318,13 +2325,45 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
   // All-matching mode (selectAllMatching=true): every record matching current filters
   //   is selected EXCEPT those in excludedIds. This lets the user deselect individual
   //   rows without losing selections on unseen pages.
-  const [selectedIds,        setSelectedIds]        = useState<Set<number>>(new Set());
-  const [selectAllMatching,  setSelectAllMatching]  = useState(false);
-  const [excludedIds,        setExcludedIds]        = useState<Set<number>>(new Set());
+  const selectionSessionRef = useRef<{ sessionId: number | null; generation: number }>({
+    sessionId: viewSessionId,
+    generation: 0,
+  });
+  if (!Object.is(selectionSessionRef.current.sessionId, viewSessionId)) {
+    selectionSessionRef.current = {
+      sessionId: viewSessionId,
+      generation: selectionSessionRef.current.generation + 1,
+    };
+  }
+  const selectionGeneration = selectionSessionRef.current.generation;
+  const [storedSelection, dispatchSelection] = useReducer(
+    reduceLedgerPdfSelectionState,
+    selectionGeneration,
+    createLedgerPdfSelectionState,
+  );
+  const selectionIsCurrent = storedSelection.generation === selectionGeneration;
+  const visibleSelection = selectionIsCurrent
+    ? storedSelection
+    : createLedgerPdfSelectionState(selectionGeneration);
+  const selectedIds = visibleSelection.selectedIds;
+  const selectAllMatching = visibleSelection.selectAllMatching;
+  const excludedIds = visibleSelection.excludedIds;
+  const selectionModeActive = visibleSelection.selectionModeActive;
+  const setSelectedIds = (update: LedgerPdfSelectionUpdate<Set<number>>) => {
+    dispatchSelection({ type: "selectedIds", generation: selectionGeneration, update });
+  };
+  const setSelectAllMatching = (update: LedgerPdfSelectionUpdate<boolean>) => {
+    dispatchSelection({ type: "selectAllMatching", generation: selectionGeneration, update });
+  };
+  const setExcludedIds = (update: LedgerPdfSelectionUpdate<Set<number>>) => {
+    dispatchSelection({ type: "excludedIds", generation: selectionGeneration, update });
+  };
+  const setSelectionModeActive = (update: LedgerPdfSelectionUpdate<boolean>) => {
+    dispatchSelection({ type: "selectionModeActive", generation: selectionGeneration, update });
+  };
   // selectionModeActive: true once the user enters selection mode; only the explicit
   // Clear action sets it back to false. Prevents the checkbox column from disappearing
   // merely because selectedIds.size hits 0 (e.g. after deselecting the current page).
-  const [selectionModeActive, setSelectionModeActive] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
@@ -2392,6 +2431,11 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
   const feeRecords = ledgerData?.records ?? [];
   const ledgerTotal = ledgerData?.total ?? 0;
   const ledgerTotalPages = ledgerData?.totalPages ?? 0;
+
+  useEffect(() => {
+    dispatchSelection({ type: "reset", generation: selectionGeneration });
+    setIsDownloadingLedgerPdf(false);
+  }, [selectionGeneration]);
 
   useEffect(() => {
     setLedgerPage(1);
@@ -2467,12 +2511,39 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
 
   // ── PDF download handlers ─────────────────────────────────────────────────
   const downloadLedgerPdf = useCallback(async () => {
+    const requestGeneration = selectionGeneration;
+    if (
+      !selectionIsCurrent
+      || selectionSessionRef.current.generation !== requestGeneration
+    ) {
+      toast({
+        title: "Academic Session changed",
+        description: "Review the current Ledger selection before exporting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const exportMode = ledgerPdfExportMode({
+      selectionModeActive,
+      selectAllMatching,
+      selectedCount: selectedIds.size,
+    });
+    if (exportMode === "empty-explicit-selection") {
+      toast({
+        title: "No invoices selected",
+        description: "Select at least one invoice or clear selection mode before exporting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsDownloadingLedgerPdf(true);
     try {
       // Selection-aware: use POST when any selection is active so that IDs are
       // sent in the request body (avoids URL-length limits and is more secure).
       // With no selection, fall back to the simple GET path (no change in behavior).
-      const hasSelection = selectAllMatching || selectedIds.size > 0;
+      const hasSelection = exportMode === "explicit" || selectAllMatching;
 
       let r: Response;
       if (hasSelection) {
@@ -2486,7 +2557,7 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
           // Exclusions apply only in all-matching mode.
           excludedIds: selectAllMatching ? [...excludedIds] : [],
         };
-        r = await sessionFetch("/api/admin/fees/ledger/pdf", {
+        r = await sessionFetchForViewSession("/api/admin/fees/ledger/pdf", viewSessionId, {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify(body),
@@ -2494,15 +2565,25 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
       } else {
         // No selection — GET with toolbar filters, same as before.
         const params = ledgerFiltersToSearchParams(filters);
-        r = await sessionFetch(`/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`);
+        r = await sessionFetchForViewSession(
+          `/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`,
+          viewSessionId,
+        );
       }
 
+      if (selectionSessionRef.current.generation !== requestGeneration) return;
       if (!r.ok) {
-        const err = await r.json().catch(() => ({ message: "Download failed" }));
-        toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
+        const errorPayload = await r.json().catch(() => null);
+        if (selectionSessionRef.current.generation !== requestGeneration) return;
+        toast({
+          title: "PDF download failed",
+          description: ledgerPdfErrorMessage(r.status, errorPayload),
+          variant: "destructive",
+        });
         return;
       }
       const blob = await r.blob();
+      if (selectionSessionRef.current.generation !== requestGeneration) return;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       const cd = r.headers.get("Content-Disposition") ?? "";
@@ -2511,11 +2592,24 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
       a.click();
       URL.revokeObjectURL(a.href);
     } catch {
+      if (selectionSessionRef.current.generation !== requestGeneration) return;
       toast({ title: "PDF download failed", description: "Could not generate the ledger PDF.", variant: "destructive" });
     } finally {
-      setIsDownloadingLedgerPdf(false);
+      if (selectionSessionRef.current.generation === requestGeneration) {
+        setIsDownloadingLedgerPdf(false);
+      }
     }
-  }, [toast, filters, selectedIds, selectAllMatching, excludedIds]);
+  }, [
+    toast,
+    filters,
+    selectedIds,
+    selectAllMatching,
+    excludedIds,
+    selectionModeActive,
+    selectionGeneration,
+    selectionIsCurrent,
+    viewSessionId,
+  ]);
 
   const downloadTransactionPdf = useCallback(async () => {
     setIsDownloadingTxPdf(true);
