@@ -1,0 +1,365 @@
+# BENIUS — EXAMINATION STAGE 3B-2
+## Connect Approved Principal Overrides to Final Promotion Execution
+### CONTROLLED IMPLEMENTATION WITH MANDATORY SAFETY GATE
+
+BENIUS is in DEVELOPMENT.
+
+Stage 3A read-only audit is complete.
+
+Stage 3B-1 was implemented and reported PASS:
+- Web Principal/Admin and authorized Support Staff can create audited Promote/Retain proposals.
+- Complete examination results and valid locked Teacher recommendations are required.
+- Every proposal change or clear requires a reason.
+- Proposal events are durably written to `audit_logs` within database transactions.
+- The original Teacher ledger is preserved.
+- Executed Students cannot have proposals changed.
+- Existing Grace records remain unchanged.
+- Mobile-specific routes and behavior were not changed.
+- Proposals are currently NOT YET EXECUTED.
+- No schema changes were made.
+
+Stage 3B-1 reported 46/46 focused API tests and 10/10 Web tests passing. Four outdated storage fixture tests failed. API/Web builds passed. Authenticated Admin UI was not visually verified.
+
+The owner now authorizes Stage 3B-2, subject to the safety gate below.
+
+## APPROVED BUSINESS CONTRACT
+
+1. Principal/Admin and active same-school Support Staff with the Exam Controller module grant have final execution authority.
+2. The only newly supported override outcomes are Promote and Retain.
+3. A valid audited override takes precedence over the Teacher recommendation.
+4. With no valid override, the existing locked Teacher recommendation remains authoritative.
+5. Grace must retain its existing meaning and behavior. Do not reinterpret Grace as Promote or Retain.
+6. Incomplete examination results must never bypass readiness.
+7. A valid, current, locked Teacher decision is always required.
+8. Override reason and authenticated actor are mandatory.
+9. Preserve exact school and Academic Session isolation.
+10. Preserve archived-session write restrictions.
+11. Promotion execution prepares target-session enrollments only.
+12. Current Student Registry class/section/roll synchronization occurs only during Academic Session activation.
+13. Mobile-specific execution behavior and API contract must remain unchanged.
+14. Existing academic records and historical decisions must not be rewritten.
+15. No Fees & Payments changes.
+
+# PHASE A — MANDATORY IMPLEMENTATION-READINESS GATE
+
+Before modifying execution logic, inspect the current Stage 3B-1 implementation.
+
+## A1. Audited proposal-event resolver
+
+Trace the exact `audit_logs` event structure created by:
+
+- Single proposal save.
+- Bulk proposal save.
+- Proposal clear.
+- Proposal replacement.
+- Existing proposal read.
+
+Prove that the latest effective proposal can be resolved deterministically for:
+
+- Authenticated school.
+- Selected source Academic Session.
+- Examination term.
+- Student.
+- Source class/section.
+- Valid Teacher recommendation.
+- Proposal outcome.
+- Proposal reason and actor.
+- Event ordering.
+- Clear/tombstone semantics.
+
+The resolver must not simply select an arbitrary most-recent audit row.
+
+It must correctly handle multiple edits, clears, concurrent writes, repeated requests and historical events.
+
+Do not mistake a cleared proposal for an executable override.
+
+Do not accept unaudited legacy `promotion_overrides` rows as authorized final decisions.
+
+Do not fabricate legacy actor or reason data.
+
+If the audit-event format cannot safely represent current proposal state, STOP and report the smallest additive storage change required.
+
+Do not implement a weak fallback.
+
+## A2. Web versus Mobile execution boundary
+
+Trace:
+
+- Web execution endpoint and request contract.
+- Mobile execution endpoint and request contract.
+- Shared `executePromotionTransaction`.
+- Shared readiness helpers.
+- Any other callers.
+
+Prove how Web can execute the audited final decision while Mobile continues its existing Teacher-ledger behavior.
+
+Use an explicit server-controlled execution mode or separate trusted entry point if necessary.
+
+Do not allow the client to choose an unauthorized execution mode.
+
+Do not add a client-supplied `useOverride` flag that bypasses server policy.
+
+Do not modify Mobile-specific route files or Mobile frontend.
+
+If Web-only override execution cannot be isolated safely, STOP and report the blocker.
+
+## A3. Transactional final-decision evidence
+
+Determine how the system can atomically preserve:
+
+- Teacher recommendation.
+- Approved final decision.
+- Whether an override was applied.
+- Override reason.
+- Override actor.
+- Exact source session and term.
+- Target session and destination.
+- Execution actor.
+- Execution timestamp.
+- Target enrollment preparation.
+- Historical execution snapshot.
+
+Use existing `academic_history.snapshotJson` and transactional audit storage where appropriate.
+
+Do not overwrite the original Teacher recommendation.
+
+Do not rely on non-blocking post-transaction logging for mandatory final-decision evidence.
+
+If final-decision history cannot be guaranteed atomically, STOP and report.
+
+## A4. Report the safety-gate result
+
+Before implementation, classify:
+
+- Proposal resolver: PASS / BLOCKED.
+- Web/Mobile separation: PASS / BLOCKED.
+- Atomic final-decision history: PASS / BLOCKED.
+- Existing Grace preservation: PASS / BLOCKED.
+- Tenant/session validation: PASS / BLOCKED.
+
+Proceed to Phase B only if every item passes with source evidence.
+
+If any item is blocked, do not implement Phase B. Return the blocker and request approval.
+
+# PHASE B — IMPLEMENT FINAL-DECISION EXECUTION
+
+Proceed only after Phase A passes.
+
+## B1. Authoritative final-decision resolver
+
+Create or reuse one authoritative server-side function that resolves:
+
+- Locked Teacher recommendation.
+- Latest valid audited Web proposal, if any.
+- Effective final Promote/Retain outcome.
+- Valid target destination.
+- Readiness status.
+- Relevant actor/reason evidence.
+
+Do not duplicate examination calculations.
+
+Reuse the shared examination engine and existing promotion validation.
+
+Do not use client-supplied override state as authority.
+
+Reject stale proposals if underlying eligibility or locked recommendation has changed.
+
+If a saved proposal is no longer valid, block execution with a clear conflict response requiring review.
+
+## B2. Server-approved preview and readiness
+
+Make the Web Principal Exam Controller preview and execution use the same authoritative final-decision resolver.
+
+The Web must distinguish:
+
+- Teacher recommendation.
+- Saved Principal/Support Staff proposal.
+- Validated final outcome.
+- Pending or blocked readiness.
+- Executed final outcome.
+
+Never display a proposal as executed before the transaction commits.
+
+If a Student is incomplete, missing marks, missing a valid locked ledger or has a stale decision, show Pending/Blocked.
+
+Never silently fall back to the Teacher recommendation when an invalid or stale saved proposal exists. Require explicit resolution.
+
+## B3. Execution transaction
+
+Inside the execution transaction:
+
+1. Authenticate and authorize the execution actor.
+2. Validate the authenticated school.
+3. Validate the explicit active source Academic Session.
+4. Validate the exact source-session Student enrollment.
+5. Validate the examination term.
+6. Recompute or validate authoritative examination completeness.
+7. Validate the locked Teacher recommendation.
+8. Resolve the latest valid audited final proposal.
+9. Validate the target Academic Session and destination.
+10. Validate target class and section against school configuration.
+11. Check for previous execution or conflicting target enrollment.
+12. Apply the final outcome, not an untrusted client destination.
+13. Prepare the target-session enrollment.
+14. Persist final-decision history and mandatory audit evidence atomically.
+15. Commit all related changes together.
+
+If any validation fails, roll back the entire transaction.
+
+Preserve idempotent retries for the exact same previously executed decision.
+
+Reject conflicting repeated execution attempts.
+
+Do not update `students.class`, `students.section` or `students.rollNumber` here.
+
+## B4. Promote and Retain semantics
+
+Preserve the existing configured promotion destination rules.
+
+For Promote, prepare the validated destination class/section.
+
+For Retain, prepare the valid retained class/section according to existing promotion rules.
+
+Do not invent a new class, section or roll number.
+
+If the correct destination cannot be derived unambiguously, block the operation and report the required configuration or owner decision.
+
+Do not use the current Student Registry placement as a substitute for source-session enrollment.
+
+## B5. Grace and legacy preservation
+
+Do not introduce new Grace overrides.
+
+Do not convert existing Grace records into Promote or Retain.
+
+Preserve existing Grace semantics and historical decisions.
+
+Unaudited legacy overrides must not silently control execution.
+
+If an existing legacy override conflicts with the new audited decision, block and report rather than guessing.
+
+## B6. Mobile compatibility
+
+Mobile execution must continue using its existing Teacher-ledger-based contract.
+
+Do not modify Mobile-specific files, endpoint payloads or authorization.
+
+Shared helper changes must be backward-compatible.
+
+Add regression tests demonstrating that Mobile does not consume Web-only audited proposals.
+
+Do not assume unchanged Mobile files prove unchanged Mobile behavior.
+
+## B7. Principal Analytics and history
+
+After execution:
+
+- Show the actual executed final outcome.
+- Preserve the Teacher recommendation separately.
+- Identify an applied override where authorized.
+- Preserve actor/reason audit evidence.
+- Avoid labeling an unexecuted proposal as final.
+
+Use existing server-side result/history services where possible.
+
+Do not expose internal Principal override or audit details through Student examination APIs.
+
+Do not introduce a Student-facing promotion feature in this stage.
+
+# PHASE C — TESTS AND VERIFICATION
+
+Add focused tests covering:
+
+1. No proposal → Teacher recommendation executed.
+2. Teacher Promote → audited Retain executed.
+3. Teacher Retain → audited Promote executed.
+4. Proposal edited multiple times → latest valid proposal used.
+5. Proposal cleared → Teacher recommendation used.
+6. Invalid or stale proposal → execution blocked.
+7. Missing reason/actor evidence → proposal not executable.
+8. Incomplete results → blocked.
+9. Missing/unlocked/stale Teacher ledger → blocked.
+10. Unauthorized Support Staff → rejected.
+11. Authorized Support Staff → accepted.
+12. Cross-school access → rejected.
+13. Cross-session access → rejected.
+14. Archived source session → rejected.
+15. Invalid target session → rejected.
+16. Invalid destination → rejected.
+17. Conflicting target enrollment → rejected.
+18. Atomic audit failure → complete rollback.
+19. Concurrent proposal edits and execution → deterministic safe result.
+20. Concurrent duplicate executions → no duplicate enrollment.
+21. Exact idempotent retry → no duplicate history.
+22. Teacher ledger remains unchanged.
+23. Actual final outcome preserved in history.
+24. Principal Analytics reflects executed final outcome.
+25. Student examination API remains unchanged.
+26. Existing Grace behavior preserved.
+27. Legacy unaudited overrides cannot silently execute.
+28. Mobile execution ignores Web-only proposal events.
+29. Registry class/section/roll unchanged during execution.
+30. Registry synchronization still occurs only on Academic Session activation.
+
+Repair outdated isolated promotion test fixtures where needed.
+
+Do not weaken assertions to force tests to pass.
+
+Do not modify real Development academic records to satisfy tests.
+
+Run focused API/Web tests, relevant promotion and activation regression tests, API/Web builds and Mobile typecheck.
+
+Report baseline typecheck diagnostics separately from new diagnostics.
+
+If authenticated browser verification is unavailable, state that explicitly.
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall PASS / NEEDS CHANGES / BLOCKED.
+2. Phase A safety-gate findings and evidence.
+3. Exact final-decision resolver implementation.
+4. Web/Mobile separation mechanism.
+5. Preview/readiness/execution consistency.
+6. Override precedence.
+7. Stale proposal behavior.
+8. Atomic final-decision history.
+9. Teacher recommendation preservation.
+10. Target enrollment behavior.
+11. Registry activation preservation.
+12. Grace and legacy behavior.
+13. Principal Analytics changes.
+14. Exact files changed.
+15. Schema changes, if any.
+16. Tests passed/failed/skipped.
+17. Outdated fixture repair results.
+18. API/Web build results.
+19. Typecheck comparison.
+20. Mobile compatibility test results.
+21. Authenticated UI verification status.
+22. Existing Development records changed: YES/NO.
+23. Fees & Payments files changed: YES/NO.
+24. Production accessed: YES/NO.
+25. Deployment performed: YES/NO.
+26. Remaining risks and owner decisions.
+
+## FINAL RESTRICTIONS
+
+No Production access.
+
+No deployment.
+
+No changes to Fees & Payments.
+
+No Mobile-specific changes.
+
+No historical academic-record rewrites.
+
+No direct Student Registry placement updates during promotion execution.
+
+If the Phase A safety gate fails, STOP before implementing execution.
+
+If Phase B cannot preserve atomicity, isolation, Mobile compatibility or historical integrity, STOP and report the blocker.
+
+Do not claim Stage 3B-2 is complete unless the actual final decision is demonstrably executed and preserved correctly.
