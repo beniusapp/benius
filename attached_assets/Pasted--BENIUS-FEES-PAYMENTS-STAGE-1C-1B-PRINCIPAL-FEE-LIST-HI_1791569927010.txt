@@ -1,0 +1,431 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1B — PRINCIPAL FEE LIST & HISTORICAL CLASS/SECTION FILTER CORRECTION
+### STRICTLY LIMITED IMPLEMENTATION — PRESERVE ALL EXISTING FEES & PAYMENTS LOGIC
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner authorizes ONLY Stage 1C-1B.
+
+This is a narrowly scoped historical Student placement display and filtering correction.
+
+**CRITICAL OWNER INSTRUCTION: DO NOT CHANGE ANY EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+The existing invoice generation, fee structures, payment processing, calculations, balances, transaction records, receipts and financial workflows must continue functioning exactly as before.
+
+Do not redesign or refactor the Fees & Payments module.
+
+Do not start Stage 1C-2, Stage 1C-3 or Stage 1C-4.
+
+## 1. BACKGROUND
+
+Stage 1C-1 implemented historical enrollment resolution for Principal and Student financial documents and transaction details.
+
+The Stage 1C-1 report states:
+
+- Nine focused placement tests passed.
+- Web and API builds passed.
+- Historical placement is resolved using the exact school, Student and fee-record Session ID.
+- Missing, NULL-session, duplicate or incomplete enrollment returns an explicit unavailable state.
+- Payment/invoice session mismatches are flagged without modifying records.
+- Principal fee list and class/section filters were deliberately left unchanged to avoid inconsistent behavior.
+
+Stage 1C-1 is PARTIAL PASS.
+
+Stage 1C-1B must finish the remaining Principal fee-list and filter alignment without changing financial business logic.
+
+## 2. BUSINESS REQUIREMENT
+
+Example:
+
+Student: Ram Jaiswal
+
+Academic Session 2026–2027:
+- Historical enrollment: Class 1-A.
+
+Academic Session 2027–2028:
+- Enrollment: Class 2-A.
+- Current Student Registry: Class 2-A.
+
+When the Principal selects 2026–2027:
+
+- Fee list must show Class 1-A.
+- Fee ledger must show Class 1-A.
+- Class 1 filter must find the correct 2026–2027 fee record.
+- Section A filter must find the correct 2026–2027 fee record.
+- Class 2 filter must not incorrectly include that record merely because the current Registry says Class 2-A.
+
+When the Principal selects 2027–2028:
+
+- The corresponding fee records must display and filter using Class 2-A.
+
+The same behavior must work for all Academic Sessions, not only these example years.
+
+## 3. NON-NEGOTIABLE PROTECTION
+
+DO NOT CHANGE:
+
+1. Fee structure creation or editing.
+2. Fee structure eligibility or applicability.
+3. Fee head/category logic.
+4. Invoice generation.
+5. Bulk invoice generation.
+6. Invoice numbering.
+7. Invoice amount or breakdown.
+8. Fee structure synchronization.
+9. Due-date logic.
+10. Late-fee calculation.
+11. Discounts or concessions.
+12. Previous arrears.
+13. Payment initiation.
+14. Payment verification.
+15. Gateway integration.
+16. Webhooks.
+17. Payment allocation.
+18. Payment status.
+19. Payment reconciliation.
+20. Refunds.
+21. Outstanding balance calculations.
+22. Receipt generation logic or numbering.
+23. Financial totals.
+24. Student Registry.
+25. Enrollment write or synchronization logic.
+26. Academic Session activation.
+27. Promotion or retention.
+28. Student Profile.
+29. Teacher or Student portals unrelated to this correction.
+30. Mobile application files or contracts.
+31. Financial analytics.
+32. Financial report aggregation.
+33. CSV/PDF financial exports.
+34. Direct document authorization.
+35. Database schemas or migrations.
+36. Existing Development database records.
+37. Production environment.
+
+Do not initiate financial transactions.
+
+Do not deploy.
+
+Do not modify unrelated code.
+
+## 4. PHASE A — READ-ONLY SAFETY AUDIT BEFORE CODING
+
+Before making any changes:
+
+Inspect the existing Principal fee list, generated-invoice list and ledger implementation.
+
+Relevant locations identified by Stage 1B:
+
+- `artifacts/api-server/src/routes/routes.ts:4719–4752`
+- `artifacts/api-server/src/routes/routes.ts:4818–4975`
+- `artifacts/benius-web/src/pages/admin-modules/fees-manager.tsx:3197–3206`
+
+Also inspect the historical placement helper implemented during Stage 1C-1.
+
+Identify:
+
+1. The exact Principal fee-list API route.
+2. How school identity is obtained.
+3. How the selected Academic Session is resolved.
+4. How fee records are filtered by school and session.
+5. How Student class and section are currently projected.
+6. How class/section filters are populated.
+7. How class/section filters are applied.
+8. Whether filters run on the backend, frontend or both.
+9. Whether pagination and result counts depend on these filters.
+10. Whether fee records are used by payment, invoice or reporting logic.
+11. Whether the Stage 1C-1 helper can be reused safely.
+12. Whether changing a shared helper would affect unrelated modules.
+13. Whether any existing financial calculation depends on current Registry class.
+14. Whether current and archived sessions use the same list path.
+15. Whether the Student Registry is used elsewhere for invoice-generation eligibility.
+
+**Important:** Do not change Registry-based class eligibility for generating new invoices. This stage concerns existing fee-record display and filters only.
+
+Prepare a short safety assessment.
+
+If the correction cannot be isolated from financial business logic, STOP and request owner approval instead of making risky changes.
+
+## 5. HISTORICAL PLACEMENT RESOLUTION
+
+For each fee record, use:
+
+- Authenticated School ID.
+- Fee record Student ID.
+- Fee record Academic Session ID.
+
+Resolve the matching historical enrollment.
+
+The required matching key is:
+
+`schoolId + studentId + sessionId`
+
+Requirements:
+
+- Use the fee record's own Session ID.
+- Keep existing authenticated school isolation.
+- Keep existing Academic Session filtering.
+- Never use current Registry class/section as historical placement.
+- Never use an enrollment belonging to another Student.
+- Never use an enrollment belonging to another school.
+- Never use an enrollment from another Academic Session.
+- Do not create or modify enrollment records.
+- Do not backfill historical enrollment.
+- Do not modify Registry synchronization.
+- Do not change Student Profile behavior.
+
+For bulk lists, use an efficient school/student/session-scoped query or a safe existing bulk helper.
+
+Avoid one enrollment query per fee row.
+
+Do not introduce duplicate fee rows through joins.
+
+Preserve the existing invoice and payment record selection.
+
+## 6. PRINCIPAL FEE LIST CORRECTION
+
+Correct only the class/section placement returned for existing fee records in the Principal Fees list.
+
+Preserve:
+
+- Invoice ID.
+- Student ID.
+- Student name.
+- Fee title.
+- Fee amount.
+- Paid amount.
+- Outstanding amount.
+- Due date.
+- Payment status.
+- Session ID.
+- Existing sorting.
+- Existing pagination.
+- Existing authorization.
+- Existing invoice actions.
+- Existing payment actions.
+
+Only replace the historical placement source.
+
+Use the matching enrollment's class and section.
+
+If roll number is displayed by the affected list, use the same session enrollment for roll number.
+
+Do not change other Student fields.
+
+Do not recalculate any fee values.
+
+Do not change fee record selection or status logic.
+
+## 7. CLASS/SECTION FILTER CORRECTION
+
+Correct Principal Fees class and section filters so they use the same historical placement source as the displayed fee rows.
+
+Requirements:
+
+1. Filters must operate on the selected Academic Session's fee-record population.
+2. Match placement using each fee record's own Session ID.
+3. Do not filter historical fee records using current Registry class/section.
+4. Class and section filter options must not misleadingly depend on the Student's current Registry placement.
+5. Preserve existing filtering interaction and user experience wherever possible.
+6. Preserve existing pagination, sorting and counts.
+7. Apply filters before pagination.
+8. Avoid duplicate rows.
+9. Do not alter financial calculations.
+10. Do not modify fee structure eligibility or invoice generation.
+
+If the filter-options endpoint is also used for invoice generation or another business workflow, do not globally change its semantics.
+
+Instead, design a narrowly scoped historical-fee filter-options mechanism that preserves all existing invoice-generation behavior.
+
+If this separation cannot be achieved safely, STOP and report the conflict.
+
+## 8. MISSING HISTORICAL ENROLLMENT
+
+When no valid historical enrollment exists:
+
+- Keep the fee record visible in the unfiltered list.
+- Display "Historical placement unavailable".
+- Do not substitute current Registry class or section.
+- Do not hide the fee record from overall list counts.
+- Do not change financial totals.
+- Do not silently assign it to a class.
+
+If the existing UI supports an explicit unresolved filter without changing unrelated functionality, implement it only if safely isolated.
+
+Otherwise, report it as a Stage 1C-2 reporting/filter enhancement.
+
+Do not add financial analytics grouping in this stage.
+
+## 9. LEGACY NULL-SESSION FEE RECORDS
+
+If `fee_records.session_id` is NULL:
+
+- Do not guess the Academic Session.
+- Do not use current Registry placement as a substitute.
+- Do not automatically assign the fee record to the active session.
+- Preserve existing selected-session record visibility rules.
+- Preserve existing financial values.
+
+Do not backfill NULL-session records.
+
+## 10. ACTIVE AND ARCHIVED SESSION BEHAVIOR
+
+This correction must work for:
+
+- Current active Academic Sessions.
+- Historical archived Academic Sessions.
+- Newly created Academic Sessions when their fee records and enrollments exist.
+
+It must not:
+
+- Modify archived-session records.
+- Activate or archive any Academic Session.
+- Modify Student placement.
+- Modify enrollment synchronization.
+- Create invoices for future sessions.
+- Introduce new write permissions.
+
+Stage 1C-1B is read/display/filter correction only.
+
+## 11. PERFORMANCE SAFETY
+
+BENIUS must remain responsive for schools with many Students and invoices.
+
+Requirements:
+
+- Avoid N+1 enrollment lookups.
+- Preserve pagination.
+- Preserve stable sorting.
+- Preserve existing result-count semantics.
+- Apply class/section filters before pagination.
+- Avoid duplicate rows from joins.
+- Preserve school/session query predicates.
+- Do not introduce unnecessary full-table scans.
+- Do not modify database indexes or schema in this stage.
+
+If the current database design cannot support a safe implementation without a migration, STOP and explain the limitation.
+
+## 12. WEB AND MOBILE COMPATIBILITY
+
+Do not modify Mobile application files.
+
+Do not modify Mobile API contracts.
+
+Do not modify Student Profile.
+
+Do not modify Principal financial report APIs.
+
+Do not modify financial analytics shared with Mobile Admin.
+
+Preserve existing Principal Fees API response field names and types wherever safely possible.
+
+Only the historical placement values should change.
+
+If missing placement requires an explicit nullable field or status, make the smallest backward-compatible change possible.
+
+Do not silently change unrelated API behavior.
+
+## 13. TESTING REQUIREMENTS
+
+Create or update focused tests using synthetic Student, enrollment and fee records.
+
+Required scenarios:
+
+1. Student 1-A in 2026–2027.
+2. Student 2-A in 2027–2028.
+3. Current Registry shows 2-A.
+4. Principal selects 2026–2027 and sees 1-A.
+5. Principal selects 2027–2028 and sees 2-A.
+6. Historical Class 1 filter finds the correct record.
+7. Historical Class 2 filter excludes that record.
+8. Historical Section A filter finds the correct record.
+9. Missing enrollment displays unavailable.
+10. Missing enrollment does not remove fee rows.
+11. NULL-session record does not inherit current placement.
+12. Cross-school enrollment is rejected.
+13. Cross-Student enrollment is rejected.
+14. Cross-session enrollment is rejected.
+15. Pagination remains correct.
+16. Sorting remains correct.
+17. Counts remain correct.
+18. No duplicate fee rows.
+19. Invoice amounts remain unchanged.
+20. Paid amounts remain unchanged.
+21. Outstanding amounts remain unchanged.
+22. Payment statuses remain unchanged.
+23. Invoice generation remains unchanged.
+24. Fee structure eligibility remains unchanged.
+25. Student Profile remains unchanged.
+26. Stage 1C-1 document fixes remain intact.
+27. Mobile contracts remain unchanged.
+28. Archived-session read-only behavior remains unchanged.
+
+Run safe unit and build tests.
+
+Database-backed tests may run only against a separately authorized, positively identified, disposable PostgreSQL environment.
+
+Never run tests against existing Development or Production financial data.
+
+Do not start or restart financial background jobs.
+
+Do not initiate payments or refunds.
+
+If database verification is unavailable, mark the relevant tests NOT VERIFIED.
+
+Do not claim full end-to-end PASS without sufficient evidence.
+
+## 14. REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall result: PASS / PARTIAL PASS / FAIL / BLOCKED.
+2. Phase A safety findings.
+3. Exact files modified.
+4. Exact API routes modified.
+5. Historical enrollment resolution behavior.
+6. Principal fee list changes.
+7. Principal ledger changes.
+8. Class filter changes.
+9. Section filter changes.
+10. Filter-options source.
+11. Missing-enrollment handling.
+12. NULL-session handling.
+13. Tenant isolation evidence.
+14. Academic Session isolation evidence.
+15. Pagination/sorting/count verification.
+16. Performance considerations.
+17. Existing fee generation logic preservation.
+18. Existing payment logic preservation.
+19. Financial totals preservation.
+20. Student Registry preservation.
+21. Enrollment synchronization preservation.
+22. Student Profile compatibility.
+23. Stage 1C-1 document compatibility.
+24. Mobile compatibility.
+25. Tests run and results.
+26. Tests not run and reasons.
+27. Build and typecheck results.
+28. Pre-existing versus new diagnostics.
+29. Database schema changes: expected NONE.
+30. Existing database records modified: expected NONE.
+31. Production accessed: expected NO.
+32. Deployment performed: expected NO.
+33. Financial transactions initiated: expected NONE.
+34. Any unresolved risks.
+35. Recommended next stage.
+
+## MANDATORY STOP CONDITION
+
+After completing the approved Stage 1C-1B changes and focused verification:
+
+STOP.
+
+Do not begin Stage 1C-2, Stage 1C-3 or Stage 1C-4.
+
+Do not modify existing financial business logic.
+
+Do not change database records.
+
+Do not deploy.
+
+Wait for explicit owner approval before further work.
