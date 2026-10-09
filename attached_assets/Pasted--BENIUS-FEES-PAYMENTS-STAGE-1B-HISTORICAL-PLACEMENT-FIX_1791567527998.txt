@@ -1,0 +1,439 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1B — HISTORICAL PLACEMENT FIX DESIGN & IMPACT ASSESSMENT
+### STRICT READ-ONLY — NO IMPLEMENTATION
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner has approved Stage 1B only: a thorough, read-only technical design and impact assessment for the confirmed historical Student class/section/roll-number defect in Fees & Payments.
+
+DO NOT MODIFY ANYTHING.
+
+## 1. CONFIRMED ISSUE
+
+Example:
+
+Student: Ram Jaiswal
+
+Academic Session 2026–2027:
+- Historical placement: Class 1-A.
+- Fee invoices, ledger and payments belong to this session.
+
+Academic Session 2027–2028:
+- Student promoted to Class 2-A.
+- Current Student Registry now shows Class 2-A.
+
+When the Principal switches back to 2026–2027, historical Fees & Payments screens incorrectly show Class 2-A.
+
+Expected:
+- 2026–2027 financial records display Class 1-A.
+- 2027–2028 financial records display Class 2-A.
+
+The same issue affects historical class-wise financial reports and certain Student invoice/receipt documents.
+
+The Stage 1A-1 investigation confirmed the source-level root cause:
+
+Fee queries correctly filter financial records by Academic Session, but their placement joins read current class/section/roll from the session-independent `students` Registry.
+
+The existing `enrollments` table stores:
+- schoolId
+- studentId
+- sessionId
+- className
+- sectionName
+- rollNo
+- status
+
+The existing historical enrollment resolver is located around:
+
+`artifacts/api-server/src/storage.ts:11900–11925`
+
+Financial records currently do not store their own class/section/roll snapshots.
+
+This stage must design the safest correction.
+
+## 2. STRICT SAFETY RESTRICTIONS
+
+DO NOT:
+
+- Modify application source code.
+- Modify database schemas.
+- Modify tests.
+- Modify configuration.
+- Query the existing Development database.
+- Access Production.
+- Modify any Student Registry row.
+- Modify any enrollment.
+- Modify any Academic Session.
+- Modify invoices, payments, receipts or reports.
+- Generate invoices.
+- Initiate payments or refunds.
+- Execute migrations.
+- Run tests that write data.
+- Start the API or Web application.
+- Start scheduled jobs.
+- Invoke payment gateways.
+- Change Mobile functionality.
+- Change Examination or Promotion logic.
+- Deploy anything.
+- Touch unrelated working-tree changes or untracked uploads.
+
+Perform source inspection and design analysis only.
+
+## 3. DESIGN THE AUTHORITATIVE HISTORICAL PLACEMENT RESOLUTION
+
+Investigate the exact implementation approach for resolving placement using:
+
+- Authenticated school ID.
+- Fee record's Student ID.
+- Fee record's Academic Session ID.
+- Exact matching `enrollments` row.
+
+The proposed design must:
+
+1. Use the fee record's own Session ID as the authoritative session context.
+2. Validate school/tenant identity.
+3. Resolve the matching Student enrollment for that same session.
+4. Return historical class, section and roll number.
+5. Never silently substitute current Registry placement.
+6. Preserve existing financial values and transaction behavior.
+7. Avoid introducing cross-school or cross-session joins.
+8. Preserve archived-session read-only behavior.
+
+Assess whether the existing resolver can be reused safely or whether a separate bulk-query/helper is preferable.
+
+Investigate potential N+1 database query risks for large fee lists and reports.
+
+Do not implement the helper.
+
+## 4. DEFINE MISSING-HISTORY AND LEGACY BEHAVIOR
+
+Prepare a detailed decision matrix for:
+
+A. Exact enrollment exists.
+
+B. Historical enrollment missing.
+
+C. Fee record has NULL Session ID.
+
+D. Student has been promoted.
+
+E. Student was retained.
+
+F. Student changed section during a session.
+
+G. Student roll number changed during a session.
+
+H. Student left the school.
+
+I. Student was transferred.
+
+J. Student Registry record is inactive.
+
+K. Enrollment status is inactive or completed.
+
+L. Multiple or inconsistent historical records.
+
+M. Archived Academic Session.
+
+N. Historical invoice generated before later Registry changes.
+
+O. Historical document downloaded again after promotion.
+
+For each scenario specify:
+- Current behavior.
+- Proposed behavior.
+- Data source.
+- Risk.
+- Whether a business-policy decision is needed.
+
+Do not invent historical placement when data is missing.
+
+For missing enrollment or NULL-session records, assess an explicit "Historical placement unavailable" state rather than guessing current placement.
+
+Do not backfill records.
+
+## 5. PRINCIPAL FEES IMPACT MAP
+
+Identify exact files, functions and query projections requiring changes for:
+
+- Generated invoice list.
+- Fee ledger.
+- Class and section filters.
+- Payment transactions.
+- Transaction details.
+- Invoice HTML/PDF.
+- Receipt HTML/PDF.
+- Payment receipt.
+- Aging report.
+- Collection summaries.
+- Financial analytics.
+- CSV exports.
+- PDF exports.
+- Printable reports.
+
+For each path report:
+
+1. Source file and line number.
+2. Existing Registry-based placement source.
+3. Proposed enrollment-based placement source.
+4. Exact Session ID available.
+5. Whether a join or response-contract change is required.
+6. Whether frontend changes are required.
+7. Whether Mobile consumes the same API.
+8. Risk of affecting financial calculations.
+9. Proposed regression tests.
+
+Do not modify the code.
+
+## 6. STUDENT FEES IMPACT MAP
+
+Inspect:
+
+- Student fee dashboard.
+- Fee invoice list.
+- Invoice details.
+- Payment history.
+- Receipt download.
+- Invoice PDF/HTML.
+- Student fee summaries.
+
+For each path identify:
+- Authenticated Student and school.
+- Selected Academic Session.
+- Fee record's own Session ID.
+- Existing placement source.
+- Proposed placement source.
+- Missing-enrollment behavior.
+- Archived-session behavior.
+- Required API/UI changes.
+
+The Student Profile page must continue showing current Registry information.
+
+Do not modify Student Profile.
+
+## 7. FINANCIAL ANALYTICS AND REPORT GROUPING
+
+Design the correction for historical class-wise reporting.
+
+Investigate:
+
+- Billed amounts by class.
+- Collected amounts by class.
+- Outstanding amounts by class.
+- Class and section filters.
+- Student-wise aging.
+- Collection summaries.
+- CSV/PDF reports.
+
+Ensure that historical financial rows are attributed to the Student's placement for the fee record's session.
+
+Example:
+
+A 2026–2027 Class 1-A invoice must not appear under Class 2-A merely because the Student was promoted in 2027–2028.
+
+Explicitly assess:
+
+- Whether overall financial totals remain unchanged.
+- Whether class-wise totals will be redistributed correctly.
+- Whether missing historical enrollment needs a separate "Unresolved historical placement" grouping.
+- Whether reports could accidentally omit unresolved financial rows.
+- Whether class/section filters should include or exclude unresolved records.
+- Whether invoice and payment session IDs are consistently aligned.
+
+Financial rows must never disappear from total calculations simply because placement cannot be resolved.
+
+Do not implement any changes.
+
+## 8. DIRECT DOCUMENT ENDPOINT SESSION SAFETY
+
+The previous audit identified potential selected-session gaps in direct invoice, receipt and transaction endpoints.
+
+Design a safe approach for:
+
+- Principal invoice download.
+- Principal receipt download.
+- Payment receipt.
+- Transaction details.
+- Student invoice download.
+- Student receipt download.
+
+Investigate:
+
+1. Whether each request has a selected Academic Session.
+2. Whether the referenced financial record belongs to that session.
+3. Whether the authenticated school is authoritative.
+4. Whether Student identity is verified.
+5. Whether missing `x-view-session-id` should be rejected.
+6. Whether existing callers always send the session header.
+7. Whether historical document downloads would remain functional.
+8. Whether Web/Mobile compatibility would be affected.
+
+Distinguish the historical placement fix from the separate session-authorization improvement.
+
+Recommend whether these should be implemented together or in separate stages.
+
+Do not modify endpoint behavior yet.
+
+## 9. DOCUMENT STABILITY POLICY
+
+Assess two designs:
+
+OPTION A — Session enrollment as historical placement source.
+
+OPTION B — Invoice-time placement snapshots.
+
+Compare:
+
+- Implementation complexity.
+- Schema impact.
+- Historical accuracy.
+- Behavior when enrollment changes later within the same session.
+- Archived-session document stability.
+- Legacy invoice compatibility.
+- Risk to existing records.
+- Reporting consistency.
+- Performance.
+
+Recommend the safest minimum fix.
+
+Important:
+
+Do not assume an enrollment row proves the Student's placement at the exact invoice issuance date.
+
+If historical enrollment can be edited, explain the consequences.
+
+Do not implement snapshots without explicit owner approval.
+
+## 10. PERFORMANCE AND QUERY DESIGN
+
+Investigate:
+
+- Existing query indexes.
+- Enrollment uniqueness constraints.
+- Batch joins for large invoice lists.
+- Report aggregation performance.
+- Avoiding N+1 lookups.
+- Query plan implications.
+- Pagination.
+- School/session predicates.
+- Large-school scalability.
+
+Recommend an approach that preserves smooth performance under heavy loads.
+
+No database benchmarking or queries are authorized in this stage.
+
+## 11. WEB AND MOBILE CONTRACT REVIEW
+
+Identify:
+
+- Web API response fields used for class/section/roll.
+- Whether their names or types need to change.
+- Mobile endpoints that share affected backend helpers.
+- Potential response compatibility risks.
+- Existing Student Profile dependency on current Registry fields.
+- Archived-session UI handling.
+- Null/unavailable placement rendering.
+
+Prefer backward-compatible changes where safe.
+
+Do not change Mobile files or contracts.
+
+## 12. REGRESSION TEST PLAN
+
+Design, but DO NOT execute, a test matrix covering:
+
+1. Student Class 1-A in 2026–2027.
+2. Student Class 2-A in 2027–2028.
+3. Switch to archived 2026–2027.
+4. Correct historical ledger placement.
+5. Correct historical invoice placement.
+6. Correct historical receipt placement.
+7. Correct historical class-wise reports.
+8. Correct CSV/PDF exports.
+9. Correct Student Fees downloads.
+10. Correct class/section filtering.
+11. Missing historical enrollment.
+12. NULL-session legacy fee record.
+13. Cross-school isolation.
+14. Cross-session isolation.
+15. Student retained.
+16. Student section changed.
+17. Student roll changed.
+18. Financial totals unchanged.
+19. No invoice/payment mutation.
+20. Mobile compatibility.
+21. Student Profile still displays current Registry.
+22. Archived-session read-only protection.
+
+Specify which tests can use mocked data and which require an isolated disposable PostgreSQL database.
+
+Do not run tests.
+
+## 13. PROPOSE A SAFE IMPLEMENTATION PLAN
+
+Provide a phased plan, with explicit approval required before each stage.
+
+Suggested structure:
+
+Stage 1C-1:
+Historical placement resolution and Principal/Student financial display corrections.
+
+Stage 1C-2:
+Historical class-wise reports, analytics and export corrections.
+
+Stage 1C-3:
+Direct document session-authorization hardening, if warranted.
+
+Stage 1C-4:
+Regression and isolated database verification.
+
+You may recommend a different order if the code architecture requires it.
+
+For every stage specify:
+- Scope.
+- Exact affected files.
+- Dependencies.
+- Financial risks.
+- Mobile compatibility considerations.
+- Test requirements.
+- Rollback approach.
+- Owner decisions required.
+
+Do not start implementation.
+
+## REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall Stage 1B status.
+2. Recommended historical placement architecture.
+3. Exact historical enrollment resolver behavior.
+4. Missing-enrollment and NULL-session policy.
+5. Full Principal Fees impact map.
+6. Full Student Fees impact map.
+7. Financial analytics/reporting impact map.
+8. Direct document session-safety assessment.
+9. Invoice snapshot versus enrollment comparison.
+10. Performance considerations.
+11. Web/Mobile compatibility risks.
+12. Proposed regression test matrix.
+13. Recommended implementation stages.
+14. Exact source file and line references.
+15. Owner business decisions requiring confirmation.
+16. Files modified: NONE.
+17. Database records modified: NONE.
+18. Production accessed: NO.
+19. Deployment performed: NO.
+20. Financial transactions initiated: NONE.
+
+## MANDATORY STOP CONDITION
+
+This is a read-only design and impact assessment.
+
+DO NOT IMPLEMENT ANY FIX.
+
+DO NOT MODIFY SOURCE CODE OR DATABASE RECORDS.
+
+DO NOT RUN FINANCIAL TRANSACTIONS OR TESTS.
+
+STOP after submitting the report and wait for explicit owner approval.
