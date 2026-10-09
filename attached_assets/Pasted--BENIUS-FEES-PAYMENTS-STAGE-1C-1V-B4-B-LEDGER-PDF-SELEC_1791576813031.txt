@@ -1,0 +1,378 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B4-B — LEDGER PDF SELECTION SAFETY AND WEB SESSION RESET
+### OWNER APPROVED — NARROW IMPLEMENTATION ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner authorizes Stage 1C-1V-B4-B to correct Ledger PDF selection validation, prevent stale selections when Academic Sessions change, and improve Ledger PDF export error handling.
+
+**NON-NEGOTIABLE: DO NOT MODIFY EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+This stage does not authorize changing archived-session export permissions.
+
+## 1. PREVIOUS STAGE STATUS
+
+Stage B4-A implemented secure local school-logo loading for Ledger PDFs.
+
+Reported results:
+- 7/7 focused security tests passed.
+- 13/13 historical-placement regressions passed.
+- API build passed.
+- No financial logic or database records changed.
+- API-wide TypeScript check still reported 327 diagnostics outside the changed files.
+- Database-backed verification was not performed.
+
+Preserve the B4-A implementation.
+
+Do not restore arbitrary external logo fetching.
+
+## 2. SCOPE
+
+Approved changes only:
+
+1. Validate Ledger PDF POST selection parameters.
+2. Prevent explicit selections from silently becoming all-matching exports.
+3. Reject mixed authorized and unauthorized invoice selections.
+4. Preserve safe select-all and exclusion behavior.
+5. Clear stale Web selection state when Academic Sessions change.
+6. Correct Ledger PDF export error-message handling.
+7. Add focused regression tests.
+
+Do not modify other export endpoints unless separately approved.
+
+## 3. PHASE A — READ-ONLY PREFLIGHT
+
+Before editing, inspect the current implementation of:
+
+- `POST /api/admin/fees/ledger/pdf`
+- `GET /api/admin/fees/ledger/pdf`
+- Principal Fees Web selection state.
+- Principal Fees Web session-switch behavior.
+- Existing CSV selection semantics.
+- Existing Payment PDF selection semantics.
+- Existing test infrastructure.
+
+Relevant source files:
+
+`artifacts/api-server/src/fees-routes.ts`
+
+`artifacts/benius-web/src/pages/admin-modules/fees-manager.tsx`
+
+Confirm the exact request payload shape and actual fee-record ID type.
+
+Confirm how the Web page distinguishes:
+- Explicit selected IDs.
+- Select all matching.
+- Excluded IDs.
+- No selection.
+- Session changes.
+- Filter changes.
+
+If the current request contract differs materially from the B3 audit, STOP and report the discrepancy before making breaking changes.
+
+## 4. PHASE B — STRICT REQUEST VALIDATION
+
+For:
+
+`POST /api/admin/fees/ledger/pdf`
+
+Define two explicit modes.
+
+### MODE 1 — EXPLICIT SELECTED INVOICES
+
+When `selectAllMatching` is explicitly false or omitted under the existing documented contract:
+
+- `selectedIds` must be an array.
+- It must contain at least one ID.
+- Every ID must be a valid positive safe integer, consistent with the actual database ID type.
+- Reject malformed values.
+- Reject zero and negative values.
+- Reject duplicate IDs.
+- Reject empty arrays.
+- Reject missing arrays.
+- Reject mixed valid and invalid values.
+- Reject unexpected conflicting selection parameters.
+
+Never silently discard invalid IDs.
+
+Never remove the selected-ID predicate because validation produced an empty list.
+
+Never fall back to exporting all matching invoices.
+
+Return a clear HTTP 400 validation response for malformed selections.
+
+### MODE 2 — SELECT ALL MATCHING
+
+When `selectAllMatching` is explicitly true:
+
+- Preserve the existing all-matching export behavior.
+- Preserve the existing Class/Section and other fee filters.
+- Preserve the existing exclusion mechanism.
+- Validate `excludedIds` as an array when provided.
+- Reject malformed exclusions.
+- Reject invalid, non-positive or duplicate exclusion IDs.
+- Reject conflicting explicit selected-ID parameters.
+- Do not silently discard invalid exclusions.
+
+The existing legitimate select-all export population must remain unchanged.
+
+### IMPORTANT COMPATIBILITY RULE
+
+Before enforcing the new contract, inspect actual Web callers and tests.
+
+If a legitimate current caller relies on a payload shape that would be broken, STOP and report it instead of silently changing unrelated workflows.
+
+Do not change the CSV or Payment PDF request contracts.
+
+## 5. PHASE C — ALL-OR-NOTHING AUTHORIZATION
+
+For explicit selected invoice IDs:
+
+Validate every requested ID against the authorized export population.
+
+The authorized population must be determined by:
+
+- Authenticated school ID from the server session.
+- Validated selected Academic Session.
+- Existing fee-record access restrictions.
+- Existing Ledger PDF filters.
+- Existing historical-placement filter behavior.
+
+Required behavior:
+
+1. All requested IDs authorized: proceed.
+2. One unauthorized ID: reject the entire request.
+3. Foreign-school ID: reject.
+4. Foreign-session ID: reject.
+5. Nonexistent ID: reject.
+6. ID outside the applied filters: reject.
+7. Mixed authorized and unauthorized IDs: reject the entire request.
+
+Do not silently omit unauthorized IDs.
+
+Do not reveal whether an unauthorized ID exists in another school.
+
+Use a generic error response consistent with existing API conventions.
+
+For select-all exclusions, ensure that exclusions cannot alter the authorized population or disclose foreign-school records. Preserve the established select-all semantics, and document how unknown or out-of-scope exclusions are handled.
+
+Avoid N+1 database queries; prefer set-based validation.
+
+Do not alter the underlying financial calculations or report-row projection.
+
+## 6. PHASE D — WEB SESSION-SWITCH SAFETY
+
+Inspect:
+
+`artifacts/benius-web/src/pages/admin-modules/fees-manager.tsx`
+
+When `viewSessionId` changes:
+
+- Clear explicit selected invoice IDs.
+- Clear excluded IDs.
+- Exit selection mode.
+- Reset selection-related state tied to the previous session.
+- Prevent an export from using stale IDs during the transition.
+- Ensure pending or in-flight selection actions cannot restore stale IDs for a new session.
+
+Do not rely solely on a delayed React effect if a user could export before the reset completes.
+
+Use the smallest reliable session-keyed or synchronous invalidation approach consistent with the existing component architecture.
+
+Preserve:
+- Existing session switching.
+- Existing fee-list loading.
+- Existing Class/Section filter behavior.
+- Existing pagination.
+- Existing archived-session read-only UI behavior.
+- Existing Student Profile behavior.
+
+Do not enable archived-session row selection.
+
+## 7. PHASE E — LEDGER PDF ERROR HANDLING
+
+Inspect the Ledger PDF export action.
+
+The archived-session guard may return:
+
+`{ "error": "ARCHIVE_READ_ONLY" }`
+
+while other routes may return a `message` field.
+
+Update only the Ledger PDF export error-handling path so that it safely handles both supported response shapes.
+
+Use a readable user-facing message.
+
+Do not expose internal stack traces or sensitive server details.
+
+Do not change unrelated export error handling.
+
+## 8. PHASE F — REQUIRED REGRESSION TESTS
+
+### Explicit selection
+
+Test:
+- One valid ID.
+- Multiple valid IDs.
+- Missing selectedIds.
+- Empty selectedIds.
+- Invalid array type.
+- String ID.
+- Zero.
+- Negative ID.
+- Unsafe integer.
+- Duplicate ID.
+- Mixed valid and malformed IDs.
+- Foreign-school ID.
+- Foreign-session ID.
+- Nonexistent ID.
+- ID outside Class/Section filters.
+- Mixed authorized and unauthorized IDs.
+- No accidental full-export fallback.
+
+### Select-all
+
+Test:
+- `selectAllMatching=true`.
+- No exclusions.
+- Valid exclusions.
+- Invalid exclusions.
+- Duplicate exclusions.
+- Conflicting selectedIds.
+- Historical Class/Section filters.
+- Correct remaining export population.
+- No cross-school/session leakage.
+
+### Web session switching
+
+Test:
+- Active to archived session.
+- Archived to active session.
+- Session A to Session B.
+- Selected IDs cleared.
+- Excluded IDs cleared.
+- Selection mode exited.
+- In-flight selection cannot restore stale state.
+- No stale selection submitted during transition.
+- Archived-session row selection remains disabled.
+
+### PDF and financial invariance
+
+Test:
+- Historical placement unchanged.
+- Invoice row values unchanged.
+- Invoice counts unchanged for equivalent valid selections.
+- Financial totals unchanged.
+- Existing PDF structure unchanged.
+- Secure local logo loading preserved.
+- No financial database writes.
+- No external payment calls.
+- Archived-session write guards unchanged.
+
+## 9. VERIFICATION
+
+Run:
+
+1. Focused selection-validation tests.
+2. Focused tenant/session authorization tests.
+3. Focused Web session-switch tests.
+4. Relevant historical-placement regressions.
+5. Existing B4-A logo-security tests.
+6. API build.
+7. Web build.
+8. API/Web typechecks, reporting pre-existing diagnostics separately.
+9. Mobile typecheck if available.
+10. `git diff --check`.
+
+Use synthetic data only.
+
+If the B1 disposable PostgreSQL environment is needed for focused integration verification, first verify its exact cluster identity and fail-closed guard.
+
+Do not recreate or substitute the cluster.
+
+Do not use the application's default DATABASE_URL.
+
+If isolated database testing is unavailable, report NOT VERIFIED.
+
+## 10. STRICT CHANGE RESTRICTIONS
+
+Permitted:
+- Ledger PDF POST validation and authorized-population checks.
+- Minimal supporting validation helpers.
+- Web selection reset.
+- Ledger PDF error handling.
+- Focused tests.
+
+Prohibited:
+- Invoice-generation changes.
+- Fee-calculation changes.
+- Payment-processing changes.
+- Refund-processing changes.
+- Financial schema changes.
+- Existing financial-record changes.
+- Historical-placement algorithm changes.
+- Academic Session activation changes.
+- Student Registry changes.
+- School-logo upload changes.
+- B4-A logo-security rollback.
+- Mobile API contract changes.
+- CSV export changes.
+- Payment PDF export changes.
+- Global archived-session guard changes.
+- Adding Ledger PDF POST to the archived-session allowlist.
+- Deployment.
+- Restarting existing application workflows.
+
+If a required correction cannot be made within this scope, STOP and request owner approval.
+
+## 11. REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / BLOCKED / FAIL.
+2. Exact files modified.
+3. Confirmed existing request contract.
+4. Explicit-selection validation behavior.
+5. Select-all behavior.
+6. Exclusion validation behavior.
+7. All-or-nothing authorization behavior.
+8. Foreign-school protection.
+9. Foreign-session protection.
+10. Historical-placement filter behavior.
+11. Web session-switch reset behavior.
+12. In-flight selection protection.
+13. Ledger PDF error-message handling.
+14. Focused test results.
+15. B4-A security regression results.
+16. Historical-placement regression results.
+17. API build result.
+18. Web build result.
+19. Typecheck results and diagnostic comparison.
+20. Mobile compatibility results, if tested.
+21. Database-backed verification status.
+22. Financial invariance evidence.
+23. Any changed request behavior and compatibility implications.
+24. Existing Development database accessed or modified.
+25. Production accessed.
+26. Existing workflows restarted.
+27. Deployment performed.
+28. Remaining gaps.
+29. Recommendation for B4-C.
+
+Do not claim PASS for tests that were not run.
+
+## 12. MANDATORY STOP
+
+After completing B4-B:
+
+**STOP AND WAIT FOR OWNER REVIEW.**
+
+Do not implement B4-C.
+
+Do not change archived-session authorization.
+
+Do not deploy.
+
+Do not modify existing Fees & Payments business logic.
+
+Do not begin Stage 1C-2 or Stage 1C-3.
