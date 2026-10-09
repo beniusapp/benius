@@ -35,6 +35,11 @@ function runSelfTests() {
   );
   assert.throws(() => validateStage3B4TestUrl(undefined, expected), /required/);
   assert.throws(() => validateStage3B4TestUrl("", expected), /required/);
+  assert.throws(() => validateStage3B4TestUrl("not-a-database-url", expected), /malformed/);
+  assert.throws(
+    () => validateStage3B4TestUrl(goodUrl.replace("postgresql:", "mysql:"), expected),
+    /does not identify/,
+  );
   assert.throws(
     () => validateStage3B4TestUrl(goodUrl.replace("@localhost:", "@remote.example:"), expected),
     /does not identify/,

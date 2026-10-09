@@ -51,6 +51,7 @@ function validateMetadataShape(metadata, metadataPath) {
   }
 
   if (
+    metadata.formatVersion !== 1 ||
     realBase !== baseDirectory ||
     path.dirname(realMetadata) !== realBase ||
     metadata.dataDirectory !== path.join(realBase, "data") ||
@@ -158,7 +159,7 @@ export async function verifyStage3B4LocalIdentity({
     ...connection,
     connectionTimeoutMillis: 2500,
     query_timeout: 2500,
-    application_name: "beni-us-stage3b4-identity-check",
+    application_name: "benius-stage3b4-identity-check",
   });
 
   try {
@@ -168,10 +169,8 @@ export async function verifyStage3B4LocalIdentity({
         current_database() AS database_name,
         current_user AS role_name,
         current_setting('cluster_name') AS cluster_id,
-        current_setting('unix_socket_directories') AS socket_directory,
-        current_setting('port')::integer AS port,
-        current_setting('listen_addresses') AS listen_addresses,
-        inet_server_addr() IS NULL AS unix_socket
+        inet_server_addr() IS NULL AS unix_socket,
+        inet_server_port() IS NULL AS unix_socket_port
     `);
     const markerResult = await client.query(
       `SELECT marker_key, cluster_id, database_name, role_name, socket_directory, port
@@ -188,10 +187,8 @@ export async function verifyStage3B4LocalIdentity({
       server.database_name !== metadata.databaseName ||
       server.role_name !== metadata.roleName ||
       server.cluster_id !== metadata.clusterId ||
-      server.socket_directory !== metadata.socketDirectory ||
-      Number(server.port) !== metadata.port ||
-      server.listen_addresses !== "" ||
       server.unix_socket !== true ||
+      server.unix_socket_port !== true ||
       marker.marker_key !== metadata.markerKey ||
       marker.cluster_id !== metadata.clusterId ||
       marker.database_name !== metadata.databaseName ||
