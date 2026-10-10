@@ -77,6 +77,15 @@ import {
 import { resolveStudentAcademicSession } from "../student-academic-session";
 import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
+import {
+  getStudentComplaintReadIds,
+  markStudentComplaintRead,
+  studentComplaintReadReceiptsEnabled,
+} from "../student-complaint-read-receipts";
+import {
+  markAuthorizedStudentComplaintRead,
+  StudentComplaintNotInInboxError,
+} from "../student-complaint-read-receipt-service";
 import { registerStudentModuleDotStateRoutes } from "../student-module-dot-state-routes";
 import { registerTeacherModuleDotStateRoutes } from "../teacher-module-dot-state-routes";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
@@ -2861,13 +2870,67 @@ export async function registerRoutes(
 
   // ===== STUDENT COMPLAINT ROUTES =====
 
+  app.get("/api/student/complaints/read-receipts/status", async (req, res) => {
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    return res.json({ enabled: studentComplaintReadReceiptsEnabled() });
+  });
+
   app.get("/api/student/complaints/inbox", async (req, res) => {
     const context = await resolveStudentAcademicSession(
       req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
     );
     if (!context.ok) return res.status(context.status).json({ message: context.message });
     const list = await storage.getStudentInboxComplaints(context.student.id, context.schoolId, context.sessionId!);
-    res.json(list);
+    if (!studentComplaintReadReceiptsEnabled()) return res.json(list);
+    try {
+      const readIds = await getStudentComplaintReadIds({
+        schoolId: context.schoolId,
+        studentId: context.student.id,
+        sessionId: context.sessionId!,
+      }, list.map(item => item.id));
+      return res.json(list.map(item => ({ ...item, isRead: readIds.has(item.id) })));
+    } catch {
+      return res.status(503).json({ message: "Complaint read status is temporarily unavailable. Retry loading the inbox." });
+    }
+  });
+
+  app.post("/api/student/complaints/:id/read", async (req, res) => {
+    if (!studentComplaintReadReceiptsEnabled()) {
+      return res.status(503).json({ message: "Complaint read tracking is not activated", code: "READ_TRACKING_DISABLED" });
+    }
+    const complaintId = Number(req.params.id);
+    if (!Number.isSafeInteger(complaintId) || complaintId <= 0) {
+      return res.status(400).json({ message: "Invalid complaint id" });
+    }
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const scope = {
+      schoolId: context.schoolId,
+      studentId: context.student.id,
+      sessionId: context.sessionId!,
+    };
+    try {
+      await markAuthorizedStudentComplaintRead(scope, complaintId, {
+        getAuthorizedInboxComplaintIds: async (authorizedScope) => {
+          const inbox = await storage.getStudentInboxComplaints(
+            authorizedScope.studentId, authorizedScope.schoolId, authorizedScope.sessionId,
+          );
+          return new Set(inbox.map(item => item.id));
+        },
+        insertReceiptOnce: markStudentComplaintRead,
+      });
+      return res.json({ complaintId, isRead: true });
+    } catch (error) {
+      if (error instanceof StudentComplaintNotInInboxError) {
+        return res.status(404).json({ message: "Complaint not found" });
+      }
+      return res.status(503).json({ message: "Unable to save read status. Please retry." });
+    }
   });
 
   app.get("/api/student/complaints/filed", async (req, res) => {

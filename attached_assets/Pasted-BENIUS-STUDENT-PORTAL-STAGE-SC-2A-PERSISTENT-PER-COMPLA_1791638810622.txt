@@ -1,0 +1,289 @@
+BENIUS — STUDENT PORTAL
+
+STAGE SC-2A: PERSISTENT PER-COMPLAINT UNREAD TRACKING
+
+TARGET:
+/student/complaints → Conduct & Grievance → From Teachers
+
+MODE: CONTROLLED SOURCE IMPLEMENTATION ONLY
+
+IMPORTANT:
+Prepare all required source code, migration files, and tests, but DO NOT execute database migrations or restart any running service.
+
+CONTEXT:
+
+Stage SC-1 confirmed:
+
+1. The From Teachers badge currently uses inboxData.length, which counts all teacher complaints, including Resolved records.
+
+2. GET /api/student/complaints/inbox returns teacher-to-student complaints scoped to the authenticated Student, School, and selected Academic Session.
+
+3. Opening a complaint currently displays its details but does not persist an individual read receipt.
+
+4. The existing Student module-level notification cursor is separate and must remain unchanged.
+
+5. The complaints table has no individual read/seen timestamp.
+
+OBJECTIVE:
+
+Introduce persistent, per-complaint read receipts so that:
+
+- A new unread teacher complaint increases the From Teachers badge.
+- Opening its details marks that complaint read.
+- The unread badge decreases after successful acknowledgement.
+- Previously read complaints remain read after logout, refresh, and login on another device.
+- Resolved complaints remain visible in history.
+- New complaints remain unread until opened.
+- Read receipts cannot cross Student, School, or Academic Session boundaries.
+
+PART A — DATA MODEL AND MIGRATION PREPARATION
+
+Design the smallest safe persistent read-receipt model.
+
+Prefer a dedicated receipt table rather than changing the existing complaint records or complaint status fields.
+
+The model must:
+
+- Identify the complaint using its existing stable primary key.
+- Identify the authenticated Student.
+- Scope records to the correct School and Academic Session.
+- Store the first successful read timestamp.
+- Prevent duplicate receipts for the same complaint and Student within the same School/Session.
+- Use appropriate foreign keys and indexes consistent with existing BENIUS schema conventions.
+- Preserve historical complaints and their statuses.
+- Avoid modifying existing complaint data.
+
+Prepare the schema definition and an explicit, reviewable migration file.
+
+MIGRATION SAFETY:
+
+- DO NOT execute the migration.
+- DO NOT run drizzle-kit push, migrate, db:push, or any equivalent command.
+- DO NOT run SQL against any database.
+- DO NOT backfill read receipts.
+- DO NOT modify existing complaint rows.
+- DO NOT automatically mark historical complaints as read.
+- DO NOT drop, rename, truncate, or rebuild existing tables.
+- DO NOT change existing columns.
+- DO NOT execute startup maintenance or data reconciliation.
+- DO NOT restart the API.
+
+If a foreign key, index, or migration operation could lock or rewrite an existing table, explain the risk in the report.
+
+Do not assume the Development database is safe to modify.
+
+PART B — BACKEND READ RECEIPT LOGIC
+
+Prepare a secure authenticated endpoint to mark one teacher complaint as read.
+
+Requirements:
+
+1. Resolve Student identity from the existing authenticated server session.
+
+2. Do not accept a Student ID or School ID supplied by the browser as authorization.
+
+3. Resolve the selected Academic Session using the existing Student Portal session mechanism.
+
+4. Verify the complaint belongs to the authenticated Student, School, and selected Academic Session.
+
+5. Verify it is a valid teacher-to-student inbox complaint.
+
+6. Reject unauthorized, deleted, cross-school, cross-student, or cross-session records.
+
+7. Make the mark-read operation idempotent.
+
+8. Store the read timestamp once; repeated opens must not create duplicate receipts or reset the original timestamp.
+
+9. Do not change complaint status, resolution, comments, or complaint ownership.
+
+10. Use existing backend authentication and error-response conventions.
+
+PART C — INBOX READ STATE
+
+Extend the existing Student complaints inbox response safely.
+
+Return enough information for the frontend to distinguish:
+
+- Read complaints.
+- Unread complaints.
+- Resolved complaints.
+- Unresolved complaints.
+
+Preserve existing response fields and existing consumer compatibility.
+
+Avoid N+1 database queries.
+
+Read receipts must be joined or fetched in a scoped batch.
+
+If the migration has not been applied, do not allow a missing receipt table to silently become an incorrect zero-unread count.
+
+Document how the API behaves before and after migration.
+
+Do not activate new database-dependent queries against the running database before migration approval.
+
+PART D — FRONTEND BADGE CORRECTION
+
+In student-complaints.tsx:
+
+Replace the current total-record badge logic with the number of unread teacher complaints.
+
+Expected behavior:
+
+- New unread complaint → badge increases.
+- Student opens complaint details → mark-read request is sent.
+- Successful acknowledgement → badge decreases.
+- Failed acknowledgement → badge remains unread and an appropriate retry/error state is available.
+- Already-read complaint → no duplicate write.
+- Resolved but unread complaint → remains unread until viewed.
+- Resolved and read complaint → no unread badge.
+- Complaint history remains visible regardless of read status.
+
+Do not automatically mark every inbox item read merely because the student opens Conduct & Grievance.
+
+Do not mark hidden or unopened complaint cards read.
+
+Preserve the existing details drawer, comments, complaint statuses, and navigation.
+
+PART E — EXISTING MODULE-LEVEL RED DOT
+
+Do not modify or replace the existing persistent Student module-level activity cursor.
+
+The module-level red dot and the From Teachers unread badge are separate features.
+
+Ensure the new per-complaint logic does not interfere with:
+
+- Student Dashboard module notifications.
+- Existing activity cursor updates.
+- Staff Grievance.
+- Peer Reports.
+- Admin Complaint Hub.
+- Teacher complaint workflows.
+
+PART F — ACADEMIC SESSION AND TENANT ISOLATION
+
+Preserve strict BENIUS isolation:
+
+- Authenticated Student ID.
+- Authenticated School ID.
+- Selected Academic Session ID.
+
+Ensure inbox reads and read receipts use the same resolved session context.
+
+Switching Academic Sessions must not reuse another session's unread count or receipts.
+
+All application-facing read timestamps must use Asia/Kolkata (IST).
+
+Use database timestamp conventions consistently.
+
+PART G — SAFE ACTIVATION STRATEGY
+
+Because this requires a new database table, prepare a controlled activation plan.
+
+Requirements:
+
+1. Keep the new feature disabled until its migration is explicitly approved and applied.
+
+2. Do not issue read-receipt table queries while the feature is disabled.
+
+3. Preserve the current existing inbox functionality before activation.
+
+4. Clearly document the feature flag or equivalent activation guard.
+
+5. Ensure frontend and backend versions remain compatible during the transition.
+
+6. Do not silently substitute total-record counts for unread counts after activation if receipt queries fail.
+
+7. Do not enable the feature automatically based only on application startup.
+
+IMPORTANT:
+Previous BENIUS investigation found that restarting the Development API may execute unrelated startup SQL maintenance and potentially destructive schema operations.
+
+Therefore, DO NOT restart the API to test this feature.
+
+PART H — FOCUSED TESTS
+
+Add isolated tests using mocks or test-only in-memory dependencies.
+
+Cover:
+
+1. New teacher complaint is unread.
+2. Opening a complaint marks only that complaint read.
+3. Badge decreases after successful read acknowledgement.
+4. Failed acknowledgement does not clear unread state.
+5. Reopening is idempotent.
+6. Read state persists across simulated sessions/devices.
+7. Resolved unread complaint remains unread until opened.
+8. Resolved read complaint is excluded from unread count.
+9. Resolved complaints remain in history.
+10. New complaint after earlier reads appears unread.
+11. Cross-student access rejected.
+12. Cross-school access rejected.
+13. Cross-session access rejected.
+14. Deleted or non-inbox complaint rejected.
+15. Duplicate receipt prevented.
+16. Feature-disabled mode makes no receipt-table queries.
+17. Missing-table or database failure does not silently return zero unread.
+18. Existing module-level activity cursor remains unchanged.
+19. Staff Grievance and Peer Reports remain unchanged.
+
+Do not require a live database or API restart to run tests.
+
+PART I — VERIFICATION
+
+Run:
+
+- Focused frontend tests.
+- Focused backend tests.
+- Web build.
+- API build or compile check where safe.
+- Migration static review.
+
+Do not run the migration.
+
+Do not start or restart services.
+
+PART J — STRICT SAFETY RULES
+
+- Development source changes only.
+- No database connections or SQL execution.
+- No schema application.
+- No production changes.
+- No data backfills.
+- No complaint status mutations.
+- No notification sending.
+- No workflow restart.
+- No deployment.
+- No financial module changes.
+- No attendance module changes.
+- No native Mobile work.
+- No unrelated refactoring.
+
+PART K — FINAL REPORT
+
+Provide:
+
+A. Files changed.
+
+B. Proposed read-receipt table and constraints.
+
+C. Exact migration filename and SQL operations.
+
+D. Backend authorization and idempotency design.
+
+E. Frontend unread badge behavior.
+
+F. Feature flag and activation safeguards.
+
+G. Student, School, and Session isolation.
+
+H. Focused test results.
+
+I. Web/API build results.
+
+J. Any compatibility or migration risks.
+
+K. Explicit confirmation that no migration, SQL, restart, deployment, or database mutation occurred.
+
+STOP after source implementation and reporting.
+
+WAIT FOR MY APPROVAL BEFORE ANY DATABASE EXECUTION OR FEATURE ACTIVATION.

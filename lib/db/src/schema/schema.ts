@@ -438,6 +438,20 @@ export const complaintStudents = pgTable("complaint_students", {
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
 });
 
+export const studentComplaintReadReceipts = pgTable("student_complaint_read_receipts", {
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({
+    columns: [table.schoolId, table.studentId, table.sessionId, table.complaintId],
+    name: "student_complaint_read_receipts_pkey",
+  }),
+  index("student_complaint_read_receipts_complaint_idx").on(table.complaintId),
+]);
+
 export const examScores = pgTable("exam_scores", {
   id: serial("id").primaryKey(),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),

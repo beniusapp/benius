@@ -14,6 +14,7 @@ import {
   studentComplaintInboxQueryKey,
   studentComplaintNotesQueryKey,
 } from "@/lib/student-complaint-query-keys";
+import { teacherComplaintBadgeCount } from "@/lib/student-complaint-unread";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
@@ -667,7 +668,7 @@ export default function StudentComplaints() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: inboxData = [], isLoading: inboxLoading, isError: inboxError } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
+  const inboxQuery = useQuery<(ComplaintRecord & { teacherName: string; isRead?: boolean })[]>({
     queryKey: studentComplaintInboxQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
       const requestSessionId = queryKey[1] as number | null;
@@ -680,6 +681,52 @@ export default function StudentComplaints() {
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
+  });
+  const inboxData = inboxQuery.data ?? [];
+  const inboxLoading = inboxQuery.isLoading;
+  const inboxError = inboxQuery.isError;
+
+  const readTrackingQuery = useQuery<{ enabled: boolean }>({
+    queryKey: ["/api/student/complaints/read-receipts/status", sessionId, student?.id],
+    enabled: !!student && sessionId !== null,
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1] as number | null;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession(
+        "/api/student/complaints/read-receipts/status",
+        requestSessionId,
+        { signal },
+      );
+      if (response.status === 404) return { enabled: false };
+      if (!response.ok) throw new Error(`Unable to load complaint read status (${response.status}).`);
+      return response.json();
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+
+  const markComplaintRead = useMutation({
+    mutationFn: async ({ complaintId, requestSessionId }: { complaintId: number; requestSessionId: number }) => {
+      const response = await sessionFetchForViewSession(
+        `/api/student/complaints/${complaintId}/read`,
+        requestSessionId,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || `Unable to save read status (${response.status}).`);
+      }
+      return response.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: studentComplaintInboxQueryKey(variables.requestSessionId), exact: true });
+    },
+    onError: (error: Error) => toast({
+      title: "Read status not saved",
+      description: `${error.message} Close and reopen the complaint to retry.`,
+      variant: "destructive",
+    }),
   });
 
   const { data: filedData = [], isLoading: filedLoading, isError: filedError } = useQuery<ComplaintRecord[]>({
@@ -760,7 +807,14 @@ export default function StudentComplaints() {
   const peerReports = filedData.filter(c => c.complaintType === "student-peer-report");
 
   const tabs: { id: TabId; label: string; Icon: typeof Mail; count?: number }[] = [
-    { id: "inbox", label: "From Teachers", Icon: Mail,        count: inboxData.length },
+    {
+      id: "inbox",
+      label: "From Teachers",
+      Icon: Mail,
+      count: inboxQuery.isSuccess && readTrackingQuery.isSuccess
+        ? teacherComplaintBadgeCount(inboxData, readTrackingQuery.data.enabled)
+        : undefined,
+    },
     { id: "staff", label: "Staff Grievance", Icon: ShieldAlert },
     { id: "peer",  label: "Peer Reports",   Icon: UserX },
   ];
@@ -891,8 +945,22 @@ export default function StudentComplaints() {
               <Mail className="w-4 h-4 text-[#10b981]" />
               <h2 className="text-sm font-bold text-gray-700">Conduct Alerts from Teachers</h2>
             </div>
-            {inboxLoading ? (
+            {inboxLoading || readTrackingQuery.isLoading ? (
               <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-[#10b981]" /></div>
+            ) : inboxError || readTrackingQuery.isError ? (
+              <div className="rounded-2xl p-5 bg-red-50 border border-red-200 text-sm text-red-800" role="alert">
+                <p>Could not load your teacher complaints or their read status. No unread count was cleared.</p>
+                <button
+                  className="mt-3 rounded-lg px-3 py-2 bg-white border border-red-200 font-semibold"
+                  onClick={() => {
+                    void inboxQuery.refetch();
+                    void readTrackingQuery.refetch();
+                  }}
+                  data-testid="button-retry-inbox"
+                >
+                  Retry
+                </button>
+              </div>
             ) : inboxData.length === 0 ? (
               <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center">
@@ -910,6 +978,9 @@ export default function StudentComplaints() {
                     studentId={student?.id}
                     onOpen={() => {
                       if (sessionId === null) return;
+                      if (readTrackingQuery.data?.enabled && c.isRead !== true) {
+                        markComplaintRead.mutate({ complaintId: c.id, requestSessionId: sessionId });
+                      }
                       setSelectedInboxSessionId(sessionId);
                       setSelectedInboxItem(c);
                     }}
