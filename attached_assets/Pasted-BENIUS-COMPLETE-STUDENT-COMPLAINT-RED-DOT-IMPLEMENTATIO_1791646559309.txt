@@ -1,0 +1,100 @@
+BENIUS — COMPLETE STUDENT COMPLAINT RED-DOT IMPLEMENTATION
+
+STAGE 2 — CODE AND TESTS ONLY
+
+Continue from the existing Stage 1 implementation. Do not start over.
+
+CURRENT STATUS:
+- Migration 020_student_complaint_reply_notifications.sql is prepared but unapplied.
+- The new forward-only reply-event table and Development-only feature gate are prepared.
+- The new feature is disabled.
+- Existing complaint read receipts remain active.
+
+OBJECTIVE:
+
+Make the Student Dashboard Complaints red dot appear for:
+1. New unread Teacher-to-Student complaints.
+2. New Student-visible Teacher/Admin replies to previously read complaints.
+
+REQUIRED IMPLEMENTATION:
+
+1. Record qualifying Teacher/Admin reply events atomically with their complaint notes, only after the new feature is activated.
+
+2. Do not create events for Student-authored replies or historical notes.
+
+3. Preserve existing complaint read receipts and history. Do not backfill old data.
+
+4. Implement a School/Student/Academic Session-scoped unread-count API combining:
+   - Existing unread incoming complaints.
+   - New unread qualifying reply events.
+
+5. Prevent double-counting a complaint that has both an unread initial complaint and an unread reply.
+
+6. Implement read acknowledgement only after the Student successfully opens a complaint and its notes load.
+
+7. Acknowledge only reply events actually included in the loaded response. A concurrently arriving reply must remain unread.
+
+8. Connect the Student Dashboard Complaints red dot to the new unread-count API.
+
+9. Opening the Complaints module alone must not clear unread complaint notifications.
+
+10. Refresh the red-dot state after successful read acknowledgement, Dashboard return, session change and window focus.
+
+11. Preserve the existing Complaints module-level seen cursor for compatibility.
+
+12. Do not change Homework, Classwork or Noticeboard notification behavior.
+
+SAFETY AND CORRECTNESS:
+
+- Enforce authenticated School ID, Student ID and selected Academic Session ID for every read, write and acknowledgement.
+- Preserve existing complaint authorization and visibility rules.
+- Ensure atomic event creation and concurrency-safe read acknowledgement.
+- Do not rely on legacy timestamp conversions or assume note IDs reflect commit order.
+- Keep new behavior behind the existing disabled Development-only gate.
+- Startup validation must not require migration 020 while the new gate is disabled.
+- If a safe implementation requires changing the prepared migration, explain the reason and stop for approval before proceeding.
+
+TESTS:
+
+Add focused tests for:
+- New complaint unread.
+- Successful opening clears unread.
+- New Teacher/Admin reply triggers red dot.
+- Student reply does not.
+- Multiple unread complaints.
+- Resolved complaints.
+- Concurrent reply/read race.
+- Cross-school, cross-student and cross-session isolation.
+- Disabled-feature fallback.
+- API failures.
+- Homework/Noticeboard regression protection.
+
+Run focused tests and API/Web builds.
+
+PERMISSIONS:
+
+ALLOWED:
+- Application code changes.
+- Focused tests.
+- Non-destructive builds.
+
+NOT ALLOWED:
+- Execute migration 020 or any SQL.
+- Modify existing database records.
+- Change feature flags.
+- Restart services.
+- Deploy or publish.
+- Touch Production.
+- Modify Mobile or unrelated modules.
+
+FINAL REPORT:
+
+1. Files changed.
+2. Functionality completed.
+3. Concurrency and isolation protections.
+4. Tests and build results.
+5. Remaining blockers before activation.
+
+Do not claim completion unless the new behavior is implemented and tested.
+
+STOP after code preparation and wait for my approval before migration or activation.

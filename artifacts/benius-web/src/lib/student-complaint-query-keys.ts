@@ -6,3 +6,6 @@ export const studentComplaintFiledQueryKey = (sessionId: number | null) =>
 
 export const studentComplaintNotesQueryKey = (complaintId: number, sessionId: number | null) =>
   ["/api/student/complaints", complaintId, "notes", sessionId] as const;
+
+export const studentComplaintReplyUnreadCountQueryKey = (sessionId: number | null, studentId: number | null) =>
+  ["/api/student/complaints/reply-notifications/unread-count", sessionId, studentId] as const;

@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { teacherComplaintBadgeCount } from "./student-complaint-unread";
+import { studentComplaintDashboardDot, studentModuleTilePulse, teacherComplaintBadgeCount } from "./student-complaint-unread";
 
 test("disabled receipt mode preserves the legacy total-record badge", () => {
   assert.equal(teacherComplaintBadgeCount([
     { id: 1, status: "Resolved", isRead: false },
     { id: 2, status: "Pending", isRead: true },
   ], false), 2);
+});
+
+test("reply-aware Dashboard dot replaces legacy state only when its API has a count", () => {
+  assert.equal(studentComplaintDashboardDot(false, 8, false), false);
+  assert.equal(studentComplaintDashboardDot(true, 0, true), false);
+  assert.equal(studentComplaintDashboardDot(true, 2, false), true);
+  assert.equal(studentComplaintDashboardDot(true, null, true), true);
+  assert.equal(studentComplaintDashboardDot(true, undefined, true), true);
+});
+
+test("reply-aware behavior does not alter Homework, Classwork, or Noticeboard dots", () => {
+  for (const module of ["homework", "classwork", "noticeboard"]) {
+    assert.equal(studentModuleTilePulse(module, true, true, 0), true);
+    assert.equal(studentModuleTilePulse(module, false, true, 3), false);
+  }
 });
 
 test("enabled badge counts unread resolved and unresolved items alike", () => {

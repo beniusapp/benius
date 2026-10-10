@@ -1,7 +1,7 @@
 import {
   schools, students, users, teachers,
   attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices, noticeReads,
-  complaints, complaintNotes, complaintStudents, examScores, galleryItems, calendarEvents,
+  complaints, complaintNotes, complaintStudents, studentComplaintNotificationEvents, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
@@ -65,6 +65,8 @@ import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeS
 import { studentTimetableScope } from "./student-timetable-visibility";
 import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
 import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./teacher-complaint-scope";
+import { studentComplaintReplyAwareEnabled } from "./student-complaint-reply-cursor-policy";
+import { isQualifyingTeacherReply } from "./student-complaint-notification-policy";
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
 import { studentWorkCreatedAtDateSql, type StudentWorkDateMode } from "./student-work-date";
 import {
@@ -4104,8 +4106,47 @@ export class DatabaseStorage {
   }
 
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
-    const [n] = await db.insert(complaintNotes).values(data).returning();
-    return n;
+    if (!studentComplaintReplyAwareEnabled() || !["teacher", "admin"].includes(data.authorRole.toLowerCase())) {
+      const [n] = await db.insert(complaintNotes).values(data).returning();
+      return n;
+    }
+    return db.transaction(async (tx) => {
+      const [complaint] = await tx.select({
+        id: complaints.id,
+        schoolId: complaints.schoolId,
+        sessionId: complaints.sessionId,
+        complaintType: complaints.complaintType,
+        studentId: complaints.studentId,
+      }).from(complaints).where(eq(complaints.id, data.complaintId)).for("update");
+      const [note] = await tx.insert(complaintNotes).values(data).returning();
+      if (!complaint || !isQualifyingTeacherReply({
+        enabled: true,
+        complaintType: complaint.complaintType,
+        authorRole: data.authorRole,
+        schoolId: complaint.schoolId,
+        sessionId: complaint.sessionId,
+      })) return note;
+      const recipients = await tx.select({ studentId: complaintStudents.studentId })
+        .from(complaintStudents).where(eq(complaintStudents.complaintId, complaint.id));
+      const studentIds = [...new Set(recipients.map(row => row.studentId)
+        .concat(complaint.studentId ? [complaint.studentId] : []))];
+      const tenantStudents = studentIds.length
+        ? await tx.select({ id: students.id }).from(students).where(and(
+            eq(students.schoolId, complaint.schoolId!),
+            inArray(students.id, studentIds),
+          ))
+        : [];
+      if (tenantStudents.length) {
+        await tx.insert(studentComplaintNotificationEvents).values(tenantStudents.map(({ id: studentId }) => ({
+          schoolId: complaint.schoolId!,
+          studentId,
+          sessionId: complaint.sessionId!,
+          complaintId: complaint.id,
+          noteId: note.id,
+        })));
+      }
+      return note;
+    });
   }
 
   async getComplaintNotes(complaintId: number): Promise<ComplaintNote[]> {

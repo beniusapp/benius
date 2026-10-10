@@ -86,6 +86,13 @@ import {
   markAuthorizedStudentComplaintRead,
   StudentComplaintNotInInboxError,
 } from "../student-complaint-read-receipt-service";
+import {
+  getReplyEventIdsForNotes,
+  getUnreadReplyComplaintIds,
+  markDisplayedReplyEventsRead,
+} from "../student-complaint-notification-events";
+import { studentComplaintReplyAwareEnabled } from "../student-complaint-reply-cursor-policy";
+import { countUnreadComplaintIds, safeDisplayedEventIds } from "../student-complaint-notification-policy";
 import { registerStudentModuleDotStateRoutes } from "../student-module-dot-state-routes";
 import { registerTeacherModuleDotStateRoutes } from "../teacher-module-dot-state-routes";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
@@ -2886,14 +2893,47 @@ export async function registerRoutes(
     const list = await storage.getStudentInboxComplaints(context.student.id, context.schoolId, context.sessionId!);
     if (!studentComplaintReadReceiptsEnabled()) return res.json(list);
     try {
-      const readIds = await getStudentComplaintReadIds({
+      const scope = {
         schoolId: context.schoolId,
         studentId: context.student.id,
         sessionId: context.sessionId!,
-      }, list.map(item => item.id));
-      return res.json(list.map(item => ({ ...item, isRead: readIds.has(item.id) })));
+      };
+      const complaintIds = list.map(item => item.id);
+      const readIds = await getStudentComplaintReadIds(scope, complaintIds);
+      const unreadReplies = studentComplaintReplyAwareEnabled()
+        ? await getUnreadReplyComplaintIds(scope, complaintIds)
+        : new Set<number>();
+      return res.json(list.map(item => ({
+        ...item,
+        isRead: readIds.has(item.id) && !unreadReplies.has(item.id),
+      })));
     } catch {
       return res.status(503).json({ message: "Complaint read status is temporarily unavailable. Retry loading the inbox." });
+    }
+  });
+
+  app.get("/api/student/complaints/reply-notifications/unread-count", async (req, res) => {
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    if (!studentComplaintReplyAwareEnabled()) return res.json({ enabled: false, unreadCount: null });
+    try {
+      const scope = {
+        schoolId: context.schoolId,
+        studentId: context.student.id,
+        sessionId: context.sessionId!,
+      };
+      const inbox = await storage.getStudentInboxComplaints(scope.studentId, scope.schoolId, scope.sessionId);
+      const ids = inbox.map(item => item.id);
+      const [readIds, replyIds] = await Promise.all([
+        getStudentComplaintReadIds(scope, ids),
+        getUnreadReplyComplaintIds(scope, ids),
+      ]);
+      const unreadCount = countUnreadComplaintIds(ids, readIds, replyIds);
+      return res.json({ enabled: true, unreadCount });
+    } catch {
+      return res.status(503).json({ message: "Complaint notification status is temporarily unavailable." });
     }
   });
 
@@ -2914,6 +2954,12 @@ export async function registerRoutes(
       studentId: context.student.id,
       sessionId: context.sessionId!,
     };
+    const eventIds = req.body?.eventIds;
+    if (studentComplaintReplyAwareEnabled()
+      && (!Array.isArray(eventIds) || eventIds.length > 500
+        || safeDisplayedEventIds(eventIds).length !== eventIds.length)) {
+      return res.status(400).json({ message: "Reply activity acknowledgement is invalid." });
+    }
     try {
       await markAuthorizedStudentComplaintRead(scope, complaintId, {
         getAuthorizedInboxComplaintIds: async (authorizedScope) => {
@@ -2924,6 +2970,9 @@ export async function registerRoutes(
         },
         insertReceiptOnce: markStudentComplaintRead,
       });
+      if (studentComplaintReplyAwareEnabled()) {
+        await markDisplayedReplyEventsRead(scope, complaintId, eventIds as number[]);
+      }
       return res.json({ complaintId, isRead: true });
     } catch (error) {
       if (error instanceof StudentComplaintNotInInboxError) {
@@ -3053,7 +3102,16 @@ export async function registerRoutes(
       if (!inbox.some(item => item.id === complaintId)) return res.status(403).json({ message: "Access denied" });
     }
     const notes = await storage.getComplaintNotes(complaintId);
-    res.json(notes);
+    if (!studentComplaintReplyAwareEnabled()) return res.json(notes);
+    const eventIdsByNote = await getReplyEventIdsForNotes({
+      schoolId: context.schoolId,
+      studentId: context.student.id,
+      sessionId: context.sessionId!,
+    }, complaintId, notes.map(note => note.id));
+    return res.json(notes.map(note => ({
+      ...note,
+      notificationEventIds: eventIdsByNote.get(note.id) ?? [],
+    })));
   });
 
   // POST a comment on a complaint the student is a party to

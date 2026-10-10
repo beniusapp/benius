@@ -18,6 +18,8 @@ import {
   resetStudentDashboardIdentity,
 } from "@/lib/student-dashboard-session";
 import { safeStudentSchoolLogoUrl } from "@/lib/student-school-logo";
+import { studentComplaintReplyUnreadCountQueryKey } from "@/lib/student-complaint-query-keys";
+import { studentModuleTilePulse } from "@/lib/student-complaint-unread";
 import {
   millisecondsUntilNextISTHour,
   minutesSinceMidnightIST,
@@ -205,6 +207,25 @@ export default function StudentDashboard() {
     enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
     studentId: student?.id,
     poll: true,
+  });
+  const complaintReplyUnreadQuery = useQuery<{ enabled: boolean; unreadCount: number | null }>({
+    queryKey: studentComplaintReplyUnreadCountQueryKey(selectedSessionId, student?.id ?? null),
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1] as number | null;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession(
+        "/api/student/complaints/reply-notifications/unread-count",
+        requestSessionId,
+        { signal },
+      );
+      if (!response.ok) throw new Error(`Unable to load complaint notification status (${response.status}).`);
+      return response.json();
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
 
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
@@ -607,8 +628,15 @@ export default function StudentDashboard() {
         >
           {TILES.map((tile) => {
             const showPulse =
-              (tile.moduleDotKey !== undefined
-                && (moduleDotState.query.data?.[tile.moduleDotKey]?.hasNewActivity ?? false)) ||
+              (tile.id === "complaints"
+                ? studentModuleTilePulse(
+                    tile.id,
+                    moduleDotState.query.data?.complaints?.hasNewActivity ?? false,
+                    complaintReplyUnreadQuery.data?.enabled ?? false,
+                    complaintReplyUnreadQuery.data?.unreadCount,
+                  )
+                : tile.moduleDotKey !== undefined
+                  && (moduleDotState.query.data?.[tile.moduleDotKey]?.hasNewActivity ?? false)) ||
               (tile.feesKey && feesTotalDue > 0) ||
               (tile.pulse && !tile.moduleDotKey && !tile.noticeKey && !tile.feesKey && (pendingHwCount ?? 0) > 0);
 

@@ -13,6 +13,7 @@ import {
   studentComplaintFiledQueryKey,
   studentComplaintInboxQueryKey,
   studentComplaintNotesQueryKey,
+  studentComplaintReplyUnreadCountQueryKey,
 } from "@/lib/student-complaint-query-keys";
 import { teacherComplaintBadgeCount } from "@/lib/student-complaint-unread";
 import { useToast } from "@/hooks/use-toast";
@@ -54,6 +55,7 @@ interface ComplaintNote {
   authorName: string;
   content: string;
   createdAt: string;
+  notificationEventIds?: number[];
 }
 
 interface ComplaintRecord {
@@ -102,11 +104,15 @@ function InboxDetailDrawer({
   c,
   student,
   viewSessionId,
+  readTrackingEnabled,
+  onNotesLoaded,
   onClose,
 }: {
   c: ComplaintRecord & { teacherName: string };
   student: StudentMe;
   viewSessionId: number;
+  readTrackingEnabled: boolean;
+  onNotesLoaded: (eventIds: number[]) => Promise<unknown>;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -115,7 +121,7 @@ function InboxDetailDrawer({
   const [commentText, setCommentText] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { data: notes = [], isLoading: notesLoading } = useQuery<ComplaintNote[]>({
+  const notesQuery = useQuery<ComplaintNote[]>({
     queryKey: studentComplaintNotesQueryKey(c.id, viewSessionId),
     queryFn: async ({ queryKey, signal }) => {
       const requestSessionId = queryKey[3] as number | null;
@@ -127,6 +133,29 @@ function InboxDetailDrawer({
     enabled: viewSessionId !== null,
     refetchInterval: 15000,
   });
+  const notes = notesQuery.data ?? [];
+  const notesLoading = notesQuery.isLoading;
+  const acknowledgedEventIds = useRef(new Set<number>());
+  const receiptAcknowledged = useRef(false);
+  const acknowledging = useRef(false);
+  const failedAckKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!readTrackingEnabled || !notesQuery.isSuccess) return;
+    const visibleIds = [...new Set(notes.flatMap(note => note.notificationEventIds ?? []))];
+    const newlyVisibleIds = visibleIds.filter(id => !acknowledgedEventIds.current.has(id));
+    if (acknowledging.current || (receiptAcknowledged.current && newlyVisibleIds.length === 0)) return;
+    const ackKey = `${receiptAcknowledged.current ? "read" : "first"}:${newlyVisibleIds.join(",")}`;
+    if (failedAckKey.current === ackKey) return;
+    failedAckKey.current = ackKey;
+    acknowledging.current = true;
+    void onNotesLoaded(newlyVisibleIds).then(() => {
+      newlyVisibleIds.forEach(id => acknowledgedEventIds.current.add(id));
+      receiptAcknowledged.current = true;
+      failedAckKey.current = null;
+    }).catch(() => undefined).finally(() => {
+      acknowledging.current = false;
+    });
+  }, [notes, notesQuery.isSuccess, onNotesLoaded, readTrackingEnabled]);
 
   const postNote = useMutation({
     mutationFn: async ({ sessionId, content }: { sessionId: number; content: string }) => {
@@ -707,11 +736,11 @@ export default function StudentComplaints() {
   });
 
   const markComplaintRead = useMutation({
-    mutationFn: async ({ complaintId, requestSessionId }: { complaintId: number; requestSessionId: number }) => {
+    mutationFn: async ({ complaintId, requestSessionId, eventIds }: { complaintId: number; requestSessionId: number; eventIds: number[] }) => {
       const response = await sessionFetchForViewSession(
         `/api/student/complaints/${complaintId}/read`,
         requestSessionId,
-        { method: "POST" },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventIds }) },
       );
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -721,6 +750,10 @@ export default function StudentComplaints() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: studentComplaintInboxQueryKey(variables.requestSessionId), exact: true });
+      queryClient.invalidateQueries({
+        queryKey: studentComplaintReplyUnreadCountQueryKey(variables.requestSessionId, student?.id ?? null),
+        exact: true,
+      });
     },
     onError: (error: Error) => toast({
       title: "Read status not saved",
@@ -978,9 +1011,6 @@ export default function StudentComplaints() {
                     studentId={student?.id}
                     onOpen={() => {
                       if (sessionId === null) return;
-                      if (readTrackingQuery.data?.enabled && c.isRead !== true) {
-                        markComplaintRead.mutate({ complaintId: c.id, requestSessionId: sessionId });
-                      }
                       setSelectedInboxSessionId(sessionId);
                       setSelectedInboxItem(c);
                     }}
@@ -1221,9 +1251,16 @@ export default function StudentComplaints() {
       {/* ── Inbox Detail Drawer ── */}
       {selectedInboxItem && student && sessionId !== null && selectedInboxSessionId === sessionId && (
         <InboxDetailDrawer
+          key={`${selectedInboxItem.id}:${selectedInboxSessionId}`}
           c={selectedInboxItem}
           student={student}
           viewSessionId={selectedInboxSessionId}
+          readTrackingEnabled={readTrackingQuery.data?.enabled === true}
+          onNotesLoaded={(eventIds) => markComplaintRead.mutateAsync({
+            complaintId: selectedInboxItem.id,
+            requestSessionId: selectedInboxSessionId,
+            eventIds,
+          })}
           onClose={() => setSelectedInboxItem(null)}
         />
       )}
