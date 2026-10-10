@@ -1,0 +1,379 @@
+# BENIUS — STAGE FA-R7
+## FINAL SIGNED-IN FINANCIAL ANALYTICS ACCEPTANCE TESTING
+### PRINCIPAL PORTAL → FEES & PAYMENTS → FINANCIAL ANALYTICS
+
+**MODE: VERIFICATION ONLY — STRICTLY READ-ONLY**
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+Stages FA-R4 and FA-R6 implemented targeted Financial Analytics corrections.
+
+The owner now authorizes final acceptance testing of the existing functionality, with particular emphasis on Academic Session accuracy.
+
+This stage is for TESTING ONLY.
+
+Do not change source code, financial formulas, payment/refund logic, database records, or application configuration.
+
+## 1. Mandatory safety restrictions
+
+- Do not modify application source files.
+- Do not modify database records.
+- Do not create or migrate database tables.
+- Do not create new PostgreSQL clusters.
+- Do not run database write queries.
+- Do not initiate payments or refunds.
+- Do not generate invoices or receipts that persist records.
+- Do not deploy.
+- Do not restart workflows.
+- Do not modify Academic Session status or selection records.
+- Do not change user permissions.
+- Do not perform unrelated TypeScript cleanup.
+
+Use an existing authorized test account and existing application environment only if safely available.
+
+Normal authenticated GET requests are permitted for verification.
+
+Do not use production credentials or live financial data without explicit authorization.
+
+If a suitable signed-in test environment is unavailable, report the limitation. Do not bypass authentication or create a replacement database.
+
+## 2. Verify Principal Portal login and navigation
+
+Using an existing authorized test account, if available:
+
+1. Sign in to the Principal Portal.
+2. Open Fees & Payments.
+3. Open Financial Analytics.
+4. Confirm the page loads.
+5. Confirm the correct authenticated school.
+6. Confirm the currently selected Academic Session.
+7. Confirm all cards, charts, filters, and actions are displayed appropriately.
+
+Record whether this was actually tested in the signed-in UI.
+
+If sign-in is unavailable, mark SIGNED-IN UI NOT VERIFIED.
+
+Do not substitute a public landing-page screenshot for Principal Portal verification.
+
+## 3. Mandatory Academic Session acceptance tests
+
+This is the highest-priority part of FA-R7.
+
+Test these scenarios:
+
+### Scenario A — Active Academic Session
+
+Select the active Academic Session.
+
+Verify:
+
+- Correct session name and ID.
+- Correct financial cards.
+- Correct charts.
+- Correct aging details.
+- Correct PDF session identity.
+- No archived-session financial records appear.
+
+### Scenario B — Archived Academic Session
+
+Select an archived Academic Session.
+
+Verify:
+
+- Correct archived session name and ID.
+- Financial Analytics remains readable.
+- Financial cards reflect the archived session.
+- Historical Class Performance uses archived enrollment.
+- Aging drill-down shows historical Class and Section.
+- PDF reflects the archived session.
+- No current-session financial data contaminates the results.
+
+### Scenario C — Refresh while archived session is selected
+
+1. Select an archived session.
+2. Refresh the page.
+3. Wait for authorized sessions to load.
+4. Confirm the same archived session is restored.
+5. Confirm the dashboard loads that session's data.
+
+This verifies the FA-R6 session restoration correction.
+
+### Scenario D — Navigate away and return
+
+1. Select an archived session.
+2. Navigate to another Principal module.
+3. Return to Financial Analytics.
+4. Confirm the correct session remains selected.
+5. Confirm its financial data is displayed.
+
+### Scenario E — Rapid switching
+
+Switch:
+
+Active → Archived → Active → Archived.
+
+Verify:
+
+- Every request uses the captured Academic Session ID.
+- Stale responses are not displayed under a different session.
+- Charts and cards remain consistent.
+- Aging drawer does not display previous-session data.
+- No session-mismatched PDF is downloaded.
+
+Do not claim a race condition was dynamically tested unless actual rapid switching was exercised.
+
+### Scenario F — Multiple archived sessions
+
+If more than one archived Academic Session exists:
+
+- Switch Archived A → Archived B.
+- Verify correct data and session labels.
+- Refresh.
+- Verify Archived B remains selected.
+
+If the environment has only one archived session, mark this scenario NOT VERIFIED.
+
+### Scenario G — Invalid saved session
+
+Using safe, non-destructive test methods, verify that an invalid, deleted, or unauthorized stored session ID cannot become the selected session.
+
+Do not modify the application's database or session records to manufacture this scenario.
+
+## 4. Verify every Financial Analytics card
+
+Inspect:
+
+1. Due This Period.
+2. Gross Collected.
+3. Net Collected.
+4. Outstanding.
+5. Collection Efficiency.
+6. Online Collection.
+7. Offline Collection.
+8. Overdue Amount.
+
+For each card:
+
+- Verify that it loads successfully.
+- Verify selected Academic Session ID.
+- Verify selected reporting period.
+- Verify IST date handling.
+- Verify monetary formatting.
+- Verify zero-data presentation.
+- Verify error behavior where safely observable.
+- Compare against the corresponding authorized read-only API response.
+
+Do not claim the amount is independently financially reconciled merely because the UI matches its API response.
+
+Record any business-definition ambiguity separately.
+
+Do not change formulas.
+
+## 5. Verify charts and breakdowns
+
+Test all available Financial Analytics sections, including:
+
+- Collection Trend.
+- Payment Channels.
+- Payment Channel Split.
+- Class Performance.
+- Fee Categories.
+- Receivables Aging.
+- Cash Denomination Coverage.
+- Any additional sections visible in the current implementation.
+
+Verify:
+
+- Correct Academic Session.
+- Correct reporting period.
+- Correct school.
+- Correct chart labels.
+- Correct displayed values.
+- Correct empty states.
+- Correct data after session switching.
+
+For Class Performance and Receivables Aging, explicitly inspect a promoted student's historical Class and Section if suitable existing test data is available.
+
+Do not fabricate historical enrollment records.
+
+## 6. Verify Receivables Aging
+
+Open aging buckets and inspect their detail rows.
+
+Verify:
+
+- Correct selected Academic Session.
+- Correct student identity.
+- Correct historical Class and Section.
+- Correct outstanding balance.
+- Correct processed-refund treatment.
+- Correct fractional-rupee formatting.
+- Correct class/section filtering.
+- Correct behavior after changing sessions.
+
+If the bucket has more than 200 matching invoices, report that the existing detail limit prevents a complete listing.
+
+Do not alter the 200-row cap.
+
+## 7. Verify Financial Analytics PDFs
+
+Generate existing read-only Financial Analytics reports for the selected session.
+
+Verify:
+
+- School name.
+- Academic Session name.
+- Reporting period.
+- IST timestamp.
+- Summary figures.
+- Charts and breakdowns included in the chosen report.
+- Historical Class Performance.
+- Outstanding and aging amounts.
+- Currency formatting including paise where applicable.
+
+If available, compare Active and Archived Session PDFs.
+
+Test changing Academic Sessions during an in-progress export only if this can be done safely.
+
+Confirm that a PDF from the old session cannot be presented as the new session's report.
+
+PDF generation must not write financial records.
+
+## 8. Verify reporting filters
+
+Test:
+
+- Today.
+- This Week.
+- This Month.
+- Academic Year.
+- Valid custom date range.
+- Invalid custom date range.
+- Session boundary dates.
+- Empty result.
+- Date-filter changes after Academic Session switching.
+
+Verify that every filter continues to respect the selected Academic Session.
+
+Do not change existing filter definitions.
+
+## 9. Verify read-only security boundaries
+
+Using authorized non-destructive methods, verify:
+
+- Principal access.
+- Support Staff access only when permitted.
+- Correct school isolation.
+- Correct Academic Session isolation.
+- Archived-session read-only behavior.
+- No unauthorized financial data in API responses.
+- No payment/refund operation triggered by Financial Analytics navigation.
+
+Do not attempt destructive security testing.
+
+Do not change permissions to simulate another role.
+
+If another authorized test account is unavailable, mark that role NOT VERIFIED.
+
+## 10. Verify existing builds and focused tests
+
+Run only safe existing checks relevant to FA-R7.
+
+Record:
+
+- API build result.
+- Web build result.
+- Financial reporting unit tests.
+- Historical placement tests.
+- Session restoration tests.
+- PDF formatting tests.
+
+Do not modify tests or application code.
+
+Existing workspace-wide TypeScript errors should be reported separately, not silently fixed.
+
+## 11. Required acceptance report
+
+### A. Overall verdict
+
+Choose:
+
+- PASS — all required acceptance tests completed successfully.
+- PARTIAL PASS — tested functionality passed, but required scenarios remain unverified.
+- NEEDS CHANGES — confirmed functional defects found.
+- BLOCKED — required environment or access unavailable.
+
+### B. Signed-in UI evidence
+
+Provide:
+
+- Environment tested.
+- Role used.
+- Academic Sessions tested.
+- Pages actually opened.
+- Evidence of signed-in testing.
+- Any scenarios not executable.
+
+Do not expose credentials or sensitive student information.
+
+### C. Academic Session matrix
+
+| Scenario | Actual UI tested? | API verified? | Result |
+
+Include Active, Archived, refresh, navigation, rapid switching, multiple archived sessions, and invalid saved session.
+
+### D. Financial metric matrix
+
+| Metric | UI result | API comparison | Independent reconciliation | Status |
+
+### E. Chart and filter matrix
+
+Report each chart and date filter separately.
+
+### F. Aging verification
+
+Report historical placement, refund-aware balances, paise precision, and 200-row limitation.
+
+### G. PDF verification
+
+Report actual PDF inspection results, including session identity.
+
+### H. Security verification
+
+Report school/session isolation and permission evidence.
+
+### I. Remaining issues
+
+For each issue include:
+
+- Severity.
+- Exact source location.
+- Steps to reproduce.
+- Expected result.
+- Actual result.
+- Whether confirmed or unverified.
+- Smallest suggested correction.
+
+### J. Final safety confirmation
+
+Confirm:
+
+- Source files changed: NO.
+- Database modified: NO.
+- Financial formulas changed: NO.
+- Payment/refund operations executed: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restart: NO.
+
+## 12. Mandatory stop
+
+After completing the acceptance report, STOP.
+
+Do not implement fixes.
+
+Do not change financial formulas.
+
+Do not modify unrelated modules.
+
+Wait for owner approval.
