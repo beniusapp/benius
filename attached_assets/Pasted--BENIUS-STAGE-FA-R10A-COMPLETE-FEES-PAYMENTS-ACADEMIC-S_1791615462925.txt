@@ -1,0 +1,272 @@
+# BENIUS — STAGE FA-R10A
+## COMPLETE FEES & PAYMENTS ACADEMIC SESSION VS GLOBAL DATA CLASSIFICATION AUDIT
+
+### STRICT READ-ONLY — NO CODE OR DATABASE CHANGES
+
+BENIUS is a multi-tenant School Management Information System.
+
+The owner wants to understand which features inside Principal Portal → Fees & Payments are:
+
+1. Academic Session based.
+2. Global across Academic Sessions within the same school.
+3. Hybrid — containing both session-specific and school-global data.
+4. Unclear or incorrectly scoped.
+
+The six visible tabs are:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- External Portal
+- Audit Log
+
+Inspect the actual application implementation. Do not assume a whole tab has one classification.
+
+## 1. Discover every feature
+
+For EACH of the six tabs, identify all submodules, tables, forms, settings, actions, filters, PDF exports, and underlying records.
+
+Inspect frontend, backend routes, services, and database schema definitions.
+
+Also inspect hidden/conditional features and supporting workflows used by each tab.
+
+## 2. Classify every feature
+
+Use these classifications:
+
+**SESSION-SCOPED**
+
+Data is owned by a specific Academic Session and must not be mixed with another session.
+
+**SCHOOL-GLOBAL**
+
+Data is shared across Academic Sessions but must remain isolated to the authenticated school.
+
+**HYBRID**
+
+A feature uses school-global configuration alongside Academic Session-specific operational records.
+
+**UNVERIFIED / RISK**
+
+Session ownership is absent, ambiguous, inconsistently enforced, or not proven.
+
+For every feature explain:
+
+- What data it reads.
+- What data it writes, if applicable.
+- Whether the database table has `school_id`.
+- Whether it has `session_id`.
+- Whether session ownership is established through a related invoice or another record.
+- Whether the selected Academic Session affects the result.
+- Whether the data persists unchanged when the selected session changes.
+- Whether active/archived session behavior differs.
+- Whether current student enrollment can affect historical displays.
+- Whether exports and PDFs follow the same scoping.
+- Whether the authenticated school is always enforced.
+
+A table without `session_id` is NOT automatically global if session ownership is derived through a related record.
+
+Likewise, a UI session filter alone is NOT proof of database session isolation.
+
+## 3. Financial Analytics
+
+Verify whether each metric, chart, filter, aging drill-down, Class Performance report, and PDF is Academic Session based.
+
+Identify any school-global settings used by the module.
+
+Preserve the existing Net Collected and Collection Efficiency definitions.
+
+## 4. Fee Structures
+
+Investigate carefully:
+
+- Fee categories/types.
+- Fee plans.
+- Class-based fee structures.
+- Section-specific structures, if any.
+- Fee frequency.
+- Due-date rules.
+- Late-fee policies.
+- Discounts/concessions.
+- Student-specific assignments.
+- Invoice generation.
+- Any templates or defaults.
+
+For each determine whether it is:
+
+- Defined independently per Academic Session.
+- Shared across sessions.
+- Copied when creating a new session.
+- Referenced from a global master.
+- Mutable in a way that could affect archived financial history.
+
+Do not assume Fee Structures should be global or session-specific without inspecting implementation.
+
+## 5. Ledger & Transactions
+
+Verify:
+
+- Invoice records.
+- Payment records.
+- Payment attempts.
+- Refund records.
+- Transaction history.
+- Student balances.
+- Ledger summaries.
+- Filters.
+- Receipts.
+- Exports.
+- PDF reports.
+
+Determine whether each transaction belongs to an Academic Session directly or through its invoice.
+
+Verify historical enrollment for class/section fields.
+
+Identify whether any school-wide financial view intentionally spans sessions.
+
+## 6. Reminders
+
+Verify:
+
+- Reminder configuration.
+- Templates.
+- Reminder schedules.
+- Overdue-student selection.
+- Reminder history.
+- Sent messages.
+- Dunning triggers.
+- Automatic reminder jobs.
+
+Determine which settings are school-global and which reminder targets/events belong to a specific Academic Session.
+
+Read-only inspection only. Do not send reminders.
+
+## 7. External Portal
+
+Verify:
+
+- External payment portal configuration.
+- Gateway settings.
+- Public payment links.
+- Student lookup.
+- Invoice selection.
+- Payment initiation.
+- Payment confirmation.
+- Webhook handling.
+- Payment history.
+
+Identify school-global gateway configuration versus session-owned invoices and payments.
+
+Check whether selecting an archived session changes the portal's operational behavior or whether the portal independently resolves payable invoices.
+
+Do not initiate payments or call payment webhooks.
+
+## 8. Audit Log
+
+Verify:
+
+- Audit event storage.
+- School ownership.
+- Academic Session ownership, if any.
+- Global configuration events.
+- Invoice/payment/refund events.
+- Session filters.
+- Event timestamps.
+- Archived-session visibility.
+- Exports.
+
+Determine whether Audit Log is:
+
+- A school-wide historical log.
+- A selected-session filtered log.
+- A hybrid of global and session-specific events.
+
+Check whether session-specific events retain enough information to identify their original Academic Session.
+
+Do not alter audit events.
+
+## 9. Session switching scenarios
+
+For all six tabs, analyze:
+
+Active → Archived.
+
+Archived → Active.
+
+Archived A → Archived B.
+
+Browser refresh.
+
+Switching schools, where applicable.
+
+Determine whether:
+
+- Data correctly changes with session.
+- Global settings correctly remain shared.
+- Archived records remain historically accurate.
+- Stale requests can display another session's data.
+- PDF/export session identity is correct.
+- Writes to archived sessions are appropriately protected.
+
+Do not change any behavior.
+
+## 10. Required final report
+
+### A. Executive classification table
+
+| Tab | Overall classification | Session-specific features | Global features | Risks |
+
+### B. Full feature-by-feature matrix
+
+| Tab | Feature | Data tables | School ID scope | Session ID scope | Classification | Evidence |
+
+### C. Database ownership map
+
+Explain direct and indirect session ownership for each relevant table.
+
+### D. Active versus Archived behavior
+
+Explain what changes and what remains the same when switching sessions.
+
+### E. Historical enrollment and financial records
+
+Identify any current-class fallback or historical data contamination risk.
+
+### F. PDFs and exports
+
+State whether each export is session-specific or school-global.
+
+### G. Global settings affecting historical records
+
+Identify any mutable global configuration that could reinterpret previous-session data.
+
+### H. Confirmed defects and unresolved risks
+
+Separate actual code defects from intended business-design choices.
+
+### I. Recommendations requiring owner approval
+
+Do not implement recommendations.
+
+### J. Safety confirmation
+
+Confirm no code changes, database queries, writes, migrations, payments, reminders, deployments, or workflow restarts.
+
+## 11. Mandatory stop
+
+This is a READ-ONLY architecture and behavior audit.
+
+DO NOT implement fixes.
+
+DO NOT modify database schema.
+
+DO NOT change session scoping.
+
+DO NOT change financial formulas.
+
+DO NOT change payment/refund processing.
+
+DO NOT change Fee Structures or reminders.
+
+STOP after submitting the complete classification report and wait for owner approval.
