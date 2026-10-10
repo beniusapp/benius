@@ -8,11 +8,7 @@
  *  • All API calls carry implicit tenant scope via the admin session cookie.
  *  • Session names must be unique; dates must not overlap; start < end.
  *
- * Copy Configuration categories:
- *  A – Safe to Copy (green, default-checked)
- *  B – Copy with Review (yellow, default-unchecked, warnings shown)
- *  C – Never Copy (red lock, disabled)
- *  D – Generated after creation (blue info banner)
+ * Previously saved copied-module history remains readable for legacy sessions.
  */
 
 import React, { useState, useMemo } from "react";
@@ -533,8 +529,6 @@ export interface CreatePayload {
   setAsActive:          boolean;
   newAdmissionsEnabled: boolean;
   promotionStrategy:    "defer" | "immediate";
-  copiedFromSessionId:  number | null;
-  copiedModules:        string | null;
 }
 
 function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, initialValues }: CreateModalProps) {
@@ -543,10 +537,6 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
   const [name,      setName]      = useState(initialValues?.sessionName ?? "");
   const [startDate, setStartDate] = useState(initialValues?.startDate ?? "");
   const [endDate,   setEndDate]   = useState(initialValues?.endDate ?? "");
-
-  // ── Section 2: Copy previous session ─────────────────────────────────────
-  const [copyPrev,     setCopyPrev]     = useState(!!initialValues?.copiedFromSessionId);
-  const [copiedFromId, setCopiedFromId] = useState<number | null>(initialValues?.copiedFromSessionId ?? null);
 
   // ── Validation ───────────────────────────────────────────────────────────
   const trimName = name.trim();
@@ -579,18 +569,6 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
     startDate && endDate &&
     !nameError && !dateError && !overlapError;
 
-  // ── Derived helpers ──────────────────────────────────────────────────────
-  const prevSessions = [...sessions].sort(
-    (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-  );
-  const latestPrev = prevSessions[0] ?? null;
-
-  function handleCopyPrevToggle() {
-    const next = !copyPrev;
-    setCopyPrev(next);
-    if (next && !copiedFromId && latestPrev) setCopiedFromId(latestPrev.id);
-  }
-
   function handleSubmit() {
     if (!isValid) return;
     onNext({
@@ -601,8 +579,6 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
       setAsActive:          false,
       newAdmissionsEnabled: false,
       promotionStrategy:    "defer",
-      copiedFromSessionId:  copyPrev ? copiedFromId : null,
-      copiedModules:        null,
     });
   }
 
@@ -629,7 +605,7 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
             </div>
             <div>
               <h3 className="font-bold text-white text-base leading-tight">New Academic Session</h3>
-              <p className="text-[11px] text-white/40 mt-0.5">Configure the academic year and copy settings</p>
+              <p className="text-[11px] text-white/40 mt-0.5">Set the dates for the new academic year</p>
             </div>
           </div>
           <button
@@ -732,87 +708,6 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
             </div>
           </div>
 
-          {/* ── SECTION 2: Copy Configuration ──────────────────────────── */}
-          <div>
-            <SectionLabel>2 · Copy Configuration</SectionLabel>
-
-            {/* Toggle */}
-            <label
-              className="flex items-start gap-3 cursor-pointer select-none group p-4 rounded-xl transition-all"
-              style={{
-                background: copyPrev ? "rgba(34,211,238,0.06)" : "rgba(255,255,255,0.03)",
-                border:     copyPrev ? "1px solid rgba(34,211,238,0.20)" : "1px solid rgba(255,255,255,0.07)",
-              }}
-            >
-              <div
-                className="w-4 h-4 rounded mt-0.5 flex items-center justify-center flex-shrink-0 transition-all"
-                style={{
-                  background: copyPrev ? "#22d3ee" : "rgba(255,255,255,0.06)",
-                  border:     copyPrev ? "none" : "1px solid rgba(255,255,255,0.20)",
-                }}
-                onClick={handleCopyPrevToggle}
-                data-testid="toggle-copy-prev"
-              >
-                {copyPrev && <Check className="w-3 h-3 text-[#0a1628]" />}
-              </div>
-              <div onClick={handleCopyPrevToggle} className="flex-1">
-                <p className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors">
-                  Select previous session for optional configuration copying
-                </p>
-                <p className="text-xs text-white/35 mt-0.5">
-                  Selecting a previous session does not copy settings automatically. You can copy eligible configurations later from the Academic Sessions page.
-                </p>
-              </div>
-            </label>
-
-            {/* Source picker */}
-            {copyPrev && (
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-2">
-                    Copy From Session
-                  </label>
-                  {prevSessions.length === 0 ? (
-                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-xs text-white/40 italic"
-                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                      <Info className="w-3.5 h-3.5 text-white/30" />
-                      No previous sessions available — this will be your first session.
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <select
-                        value={copiedFromId ?? ""}
-                        onChange={e => setCopiedFromId(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full h-10 pl-3 pr-8 rounded-lg text-sm text-white bg-[#0A1628]
-                                   border border-white/15 focus:outline-none focus:border-cyan-400/50 appearance-none"
-                        data-testid="select-copy-source"
-                      >
-                        <option value="">— Select a session to copy from —</option>
-                        {prevSessions.map(s => (
-                          <option key={s.id} value={s.id}>{s.sessionName}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Copy Center callout */}
-                <div className="flex items-start gap-3 px-4 py-3 rounded-xl"
-                  style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.18)" }}>
-                  <Info className="w-4 h-4 text-cyan-400/70 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-cyan-300/80">
-                      Configuration copying is optional and is never automatic.
-                    </p>
-                    <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
-                      After creation, open Copy Configuration beside the eligible target session to choose modules individually.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ── Footer ──────────────────────────────────────────────────────────── */}
@@ -826,12 +721,6 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
               {trimName}
               <span className="text-white/20">·</span>
               {fmtDate(startDate)} → {fmtDate(endDate)}
-              {copyPrev && copiedFromId && (
-                <>
-                  <span className="text-white/20">·</span>
-                  <span style={{ color: "#22d3ee" }}>Opens Copy Center →</span>
-                </>
-              )}
             </div>
           )}
 
@@ -1825,7 +1714,6 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
     sessionName: createParams.get("name") ?? "",
     startDate: createParams.get("start") ?? "",
     endDate: createParams.get("end") ?? "",
-    copiedFromSessionId: Number(createParams.get("copyFrom")) || null,
   };
   const [showCreate,     setShowCreate]     = useState(restoreCreate);
   const [rolloverTarget, setRolloverTarget] = useState<AcademicSession | null>(null);
@@ -2016,23 +1904,6 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
-                  {!isArchiveMode
-                    && !!session.status
-                    && session.status !== "archived"
-                    && !!session.copiedFromSessionId
-                    && sessions.some(source => source.id === session.copiedFromSessionId)
-                    && (
-                      <button
-                        type="button"
-                        onClick={() => setLocation(`/session-copy-center/${session.id}`)}
-                        className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-semibold text-cyan-300
-                          transition-all hover:brightness-110 active:scale-95"
-                        style={{ background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.25)" }}
-                        data-testid={`button-copy-configuration-${session.id}`}
-                      >
-                        <Copy className="w-3.5 h-3.5" /> Copy Configuration
-                      </button>
-                    )}
                   <button
                     onClick={() => {}}
                     className="w-8 h-8 flex items-center justify-center rounded-lg text-white/25
@@ -2093,7 +1964,6 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
               start: payload.startDate,
               end: payload.endDate,
             });
-            if (payload.copiedFromSessionId) q.set("copyFrom", String(payload.copiedFromSessionId));
             setLocation(`/admin-dashboard/school-setup/session-migration?${q.toString()}`);
           }}
         />

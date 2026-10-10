@@ -1,7 +1,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Route, Router, Switch } from "wouter";
 import AcademicSessions from "@/pages/admin-modules/academic-sessions";
@@ -17,7 +17,8 @@ const sessions = [
   {
     id: 88, schoolId: 3, sessionName: "2026-2027", startDate: "2026-04-01",
     endDate: "2027-03-31", isActive: false, status: "draft",
-    copiedFromSessionId: 12, copiedModules: null,
+    copiedFromSessionId: 12,
+    copiedModules: JSON.stringify({ approvedModules: ["classes"] }),
   },
   {
     id: 89, schoolId: 3, sessionName: "2027-2028", startDate: "2027-04-01",
@@ -51,7 +52,6 @@ function mount({ archiveMode = false } = {}) {
           <Route path="/admin-dashboard/academic-sessions">
             <AcademicSessions schoolId={3} isArchiveMode={archiveMode} />
           </Route>
-          <Route path="/session-copy-center/:sessionId">{params => <div data-testid="copy-target">{params.sessionId}</div>}</Route>
         </Switch>
       </QueryClientProvider>
     </Router>,
@@ -74,26 +74,22 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-describe("Academic Sessions Copy Configuration entry", () => {
-  it("shows the action only for writable targets with a resolvable source session", async () => {
+describe("Academic Sessions copy UI removal", () => {
+  it("hides Copy Configuration actions while retaining saved copy-history status", async () => {
     mount();
-    expect(await screen.findByTestId("button-copy-configuration-88")).toBeInTheDocument();
-    expect(screen.queryByTestId("button-copy-configuration-12")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("button-copy-configuration-89")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("button-copy-configuration-90")).not.toBeInTheDocument();
-    expect(screen.getByTestId("button-copy-configuration-91")).toBeInTheDocument();
+    await screen.findByTestId("session-card-88");
+    expect(screen.queryByRole("button", { name: /Copy Configuration/i })).not.toBeInTheDocument();
+    expect(screen.getByText("1 modules copied from session #12")).toBeInTheDocument();
   });
 
   it("does not offer copying in archive/read-only mode", async () => {
     mount({ archiveMode: true });
     await screen.findByTestId("session-card-88");
-    expect(screen.queryByTestId("button-copy-configuration-88")).not.toBeInTheDocument();
-  });
-
-  it("opens the Copy Center for the selected target without copying configuration", async () => {
-    mount();
-    fireEvent.click(await screen.findByTestId("button-copy-configuration-88"));
-    await waitFor(() => expect(screen.getByTestId("copy-target")).toHaveTextContent("88"));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("copy-modules"))).toBe(false);
+    expect(screen.queryByRole("button", { name: /Copy Configuration/i })).not.toBeInTheDocument();
+    expect(screen.getByText("1 modules copied from session #12")).toBeInTheDocument();
+    expect(screen.queryByTestId("button-add-session")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("button-activate-88")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("button-delete-88")).not.toBeInTheDocument();
+    expect(screen.getAllByText("View Only")).toHaveLength(sessions.length);
   });
 });

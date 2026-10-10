@@ -2,7 +2,7 @@
  * SessionMigrationPage — 3-step academic session creation wizard.
  *
  * Route: /admin-dashboard/school-setup/session-migration
- *        ?name=&start=&end=&copyFrom=<srcSessionId>
+ *        ?name=&start=&end=
  *
  * Step 1 — Session Details  (completed in the modal; wizard starts at Step 2)
  * Step 2 — Reset Overview   (informational; shows what resets vs global data)
@@ -24,12 +24,10 @@ import { fmtDate } from "@/lib/dateUtils";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Session {
-  id: number;
   sessionName: string;
   startDate: string;
   endDate: string;
   isActive: boolean;
-  copiedFromSessionId: number | null;
   status: string;
 }
 
@@ -125,8 +123,6 @@ export default function SessionMigrationPage() {
   const newName      = sp.get("name")     ?? "";
   const newStart     = sp.get("start")    ?? "";
   const newEnd       = sp.get("end")      ?? "";
-  const srcIdStr     = sp.get("copyFrom") ?? "";
-  const srcSessionId = parseInt(srcIdStr) || null;
 
   useEffect(() => {
     if (isUserLoading) return;
@@ -139,13 +135,6 @@ export default function SessionMigrationPage() {
       setLocation("/admin-dashboard/academic-sessions");
     }
   }, [currentUser?.role, isUserLoading, newName, newStart, newEnd, setLocation, toast]);
-
-  // ── Source session info ────────────────────────────────────────────────────
-  const { data: sessions = [] } = useQuery<Session[]>({
-    queryKey: ["/api/admin/academic-sessions"],
-    enabled: !isUserLoading && currentUser?.role !== "support_staff",
-  });
-  const srcSession = srcSessionId ? (sessions.find(s => s.id === srcSessionId) ?? null) : null;
 
   // ── View state ─────────────────────────────────────────────────────────────
   type View = "overview" | "summary";
@@ -167,7 +156,6 @@ export default function SessionMigrationPage() {
         sessionName:         newName,
         startDate:           newStart,
         endDate:             newEnd,
-        copiedFromSessionId: srcSessionId ?? undefined,
         status:              "draft",
       });
       if (!res.ok) {
@@ -186,7 +174,7 @@ export default function SessionMigrationPage() {
     } finally {
       createInFlight.current = false;
     }
-  }, [newName, newStart, newEnd, srcSessionId]);
+  }, [newName, newStart, newEnd]);
 
   // ── Shared components ──────────────────────────────────────────────────────
 
@@ -211,26 +199,14 @@ export default function SessionMigrationPage() {
 
   function SessionBanner() {
     return (
-      <div className="flex items-center gap-3 px-4 py-3 rounded-xl"
+      <div className="px-4 py-3 rounded-xl"
         style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.13)" }}>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Source</p>
-          <p className="text-sm font-semibold text-white/70 truncate">
-            {srcSession?.sessionName ?? (srcSessionId ? `Session #${srcSessionId}` : "—")}
-          </p>
-          {srcSession && (
-            <p className="text-[10px] text-white/30 mt-0.5">
-              {fmtDate(srcSession.startDate)} → {fmtDate(srcSession.endDate)}
-            </p>
-          )}
-        </div>
-        <ArrowRight className="w-5 h-5 text-cyan-400/40 flex-shrink-0" />
-        <div className="flex-1 min-w-0 text-right">
-          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Target (New)</p>
+        <div className="min-w-0">
+          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">New Academic Session</p>
           <p className="text-sm font-semibold text-cyan-300 truncate">{newName}</p>
           {newStart && newEnd && (
             <p className="text-[10px] text-white/30 mt-0.5">
-              {fmtDate(newStart)} → {fmtDate(newEnd)}
+              {fmtDate(newStart)} – {fmtDate(newEnd)}
             </p>
           )}
         </div>
@@ -272,7 +248,6 @@ export default function SessionMigrationPage() {
       <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
         <PageHeader onBack={() => {
           const q = new URLSearchParams({ restoreCreate: "1", name: newName, start: newStart, end: newEnd });
-          if (srcSessionId) q.set("copyFrom", String(srcSessionId));
           setLocation(`/admin-dashboard/academic-sessions?${q.toString()}`);
         }} />
 
@@ -286,13 +261,12 @@ export default function SessionMigrationPage() {
             <div className="space-y-1">
               <h2 className="text-base font-black text-white/90">Review New Academic Session</h2>
               <p className="text-[11px] text-white/40 leading-relaxed">
-                Previous academic records remain preserved. Configuration copying is optional and can be done separately after creation.
+                Review the session details before creating it. Existing academic records remain preserved.
               </p>
             </div>
 
             <section className="space-y-2 rounded-xl p-4"
               style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-              {srcSessionId && <p className="text-xs text-white/60"><strong>Copy source:</strong> {srcSession?.sessionName ?? `Session #${srcSessionId}`}</p>}
               <p className="text-sm font-semibold text-white">{newName}</p>
               <p className="text-xs text-white/50">{fmtDate(newStart)} – {fmtDate(newEnd)}</p>
             </section>
@@ -389,7 +363,6 @@ export default function SessionMigrationPage() {
                 <button
                   onClick={() => {
                     const q = new URLSearchParams({ restoreCreate: "1", name: newName, start: newStart, end: newEnd });
-                    if (srcSessionId) q.set("copyFrom", String(srcSessionId));
                     setLocation(`/admin-dashboard/academic-sessions?${q.toString()}`);
                   }}
                   className="flex-1 h-12 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/6"

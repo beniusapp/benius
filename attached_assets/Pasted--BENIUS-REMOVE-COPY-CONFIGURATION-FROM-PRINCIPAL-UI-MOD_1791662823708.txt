@@ -1,0 +1,168 @@
+# BENIUS — REMOVE COPY CONFIGURATION FROM PRINCIPAL UI
+
+MODE: TARGETED DEVELOPMENT FRONTEND IMPLEMENTATION
+
+## OBJECTIVE
+
+Simplify Admin Portal → School Setup → Academic Sessions.
+
+The Principal should not see Copy Configuration options or the Configuration Copy Center during normal Academic Session management.
+
+IMPORTANT:
+Hide the frontend functionality only. Do not delete backend code, APIs, database records, or existing copied-configuration history.
+
+## STEP 1 — VERIFY BEFORE CHANGING
+
+Read the existing Academic Session creation flow and confirm:
+
+1. A new session can be created without selecting a previous session.
+2. The existing POST /api/admin/academic-sessions endpoint accepts creation without a copy source.
+3. The three-page wizard can continue working with no source session.
+4. The backend does not require copiedFromSessionId or copiedModules.
+5. Student Promotion and session activation do not depend on configuration copying.
+6. No other frontend dependency will break when the source selector is removed.
+
+Use code inspection and mocked/focused tests only.
+
+Do not create real sessions or execute database writes.
+
+IF ANY CRITICAL DEPENDENCY IS FOUND, STOP AND REPORT BEFORE MODIFYING CODE.
+
+## STEP 2 — PAGE 1: SESSION DETAILS
+
+Remove from the Principal UI:
+
+- Copy configuration from previous academic session checkbox.
+- Copy From Session dropdown.
+- All copy-configuration explanatory messages.
+- Any footer text promising the Configuration Copy Center.
+
+Keep:
+
+- Session Name.
+- Start Date.
+- End Date.
+- Existing validation.
+- Cancel.
+- Next.
+
+Update the heading/subtitle to describe creating a new Academic Session without mentioning copying.
+
+Ensure the creation request does not accidentally reuse a stale source-session ID.
+
+Do not change the backend API contract.
+
+## STEP 3 — PAGE 2: REVIEW & CREATE
+
+Keep:
+
+- Session Migration Wizard.
+- Review & Create step.
+- New session name and dates.
+- Previous button.
+- Create New Session button.
+
+Remove:
+
+- Source-session display.
+- Source-to-target copying arrow.
+- Copy-related descriptions.
+- Any remaining copy-configuration UI.
+
+The Create New Session button must continue using the existing API.
+
+Create the session only after the Principal clicks this button.
+
+Prevent duplicate submissions.
+
+## STEP 4 — PAGE 3: SUCCESS
+
+Keep:
+
+- Session Created Successfully.
+- Created session name and dates.
+- Actual status returned by the backend.
+- Proceed to Promote Students.
+- Back to Academic Sessions.
+
+Remove any remaining references to Copy Configuration.
+
+Do not change Student Promotion navigation or automatically execute promotion.
+
+## STEP 5 — ACADEMIC SESSIONS LIST
+
+Remove the Copy Configuration button from all session rows.
+
+Preserve:
+
+- Existing Academic Session records.
+- Active, Draft and Archived status indicators.
+- Existing activation controls.
+- Existing permissions.
+- Existing session settings and protection controls.
+- Existing deletion behavior and safeguards.
+
+Do not remove historical copied-module status from the database.
+
+## STEP 6 — CONFIGURATION COPY CENTER
+
+- Remove normal Principal-facing navigation entry points to the Configuration Copy Center.
+- Do not delete its route, frontend implementation, backend endpoints, or existing records.
+- Do not modify its copying algorithms.
+- Do not execute any copy operations.
+- Do not expose a new replacement copy action elsewhere.
+
+This is a UI simplification, not removal of the underlying feature.
+
+## STEP 7 — REGRESSION TESTING
+
+Add or update focused frontend tests confirming:
+
+1. Page 1 contains no copy checkbox or source selector.
+2. Page 1 Next does not create a session.
+3. Page 2 displays the correct new session details.
+4. Page 2 Previous preserves entered details.
+5. Page 2 Create calls the existing API without a copy source.
+6. The creation request is submitted only once per action.
+7. Successful creation displays the correct session and actual backend status.
+8. Page 3 retains both required buttons.
+9. Academic Sessions rows no longer show Copy Configuration.
+10. Student Promotion navigation remains unchanged.
+11. Existing archived-session UI protections remain intact.
+12. No configuration copying is triggered automatically.
+
+Run focused Web tests, Web build, and git diff --check.
+
+## STRICT SAFETY
+
+DO NOT:
+
+- Modify backend code or APIs.
+- Modify database schema or records.
+- Execute SQL writes or migrations.
+- Create, activate, archive or delete real sessions.
+- Execute configuration copying.
+- Execute student promotion.
+- Change Academic Session activation behavior.
+- Weaken school/tenant isolation.
+- Weaken archived-session read-only protections.
+- Modify Production or Mobile.
+- Restart workflows.
+- Deploy or publish.
+- Change environment variables or feature flags.
+
+## FINAL REPORT
+
+Report:
+
+1. Whether no-source session creation was verified safe.
+2. Exact files changed.
+3. Confirmation that all Copy Configuration UI entry points were removed.
+4. Confirmation that the existing backend and data remain unchanged.
+5. Confirmation that the three-page session creation wizard still works.
+6. Test and build results.
+7. Whether a Development Web restart is required.
+
+STOP after implementation and verification.
+
+Wait for my approval before any restart or deployment.

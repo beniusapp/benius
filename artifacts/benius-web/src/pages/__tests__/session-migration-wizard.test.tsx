@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Route, Router, Switch } from "wouter";
 import SessionMigrationPage from "@/pages/admin-modules/session-migration";
+import AcademicSessions from "@/pages/admin-modules/academic-sessions";
 import { getQueryFn } from "@/lib/queryClient";
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
@@ -15,7 +16,7 @@ const SOURCE = {
 };
 const CREATED = {
   id: 88, sessionName: "2026-2027", startDate: "2026-04-01",
-  endDate: "2027-03-31", isActive: false, status: "draft", copiedFromSessionId: 12,
+  endDate: "2027-03-31", isActive: false, status: "draft", copiedFromSessionId: null,
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -31,7 +32,9 @@ function mount(path: string) {
       <QueryClientProvider client={client}>
         <Switch>
           <Route path="/admin-dashboard/school-setup/session-migration" component={SessionMigrationPage} />
-          <Route path="/admin-dashboard/academic-sessions"><div data-testid="sessions-route" /></Route>
+          <Route path="/admin-dashboard/academic-sessions">
+            {() => <div data-testid="sessions-route"><AcademicSessions schoolId={3} /></div>}
+          </Route>
           <Route path="/session-copy-center/:id">{params => <div data-testid="copy-route">{params.id}</div>}</Route>
           <Route path="/admin-dashboard/exam-controller"><div data-testid="promotion-route" /></Route>
         </Switch>
@@ -79,9 +82,11 @@ describe("Academic Session review/create flow", () => {
     expect(screen.queryByText("Session created successfully")).not.toBeInTheDocument();
   });
 
-  it("preserves source context and shows only the two Page 3 navigation actions without copying automatically", async () => {
+  it("ignores a stale copyFrom URL value and creates the session without a source", async () => {
     mount("/admin-dashboard/school-setup/session-migration?name=2026-2027&start=2026-04-01&end=2027-03-31&copyFrom=12");
-    expect(await screen.findByText(/Copy source:/)).toBeInTheDocument();
+    expect(await screen.findByText("Review New Academic Session")).toBeInTheDocument();
+    expect(screen.queryByText(/Copy source:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Configuration copying/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("button-create-new-session"));
     await screen.findByTestId("button-proceed-promote-students");
     expect(screen.getByText(/Status: draft/)).toBeInTheDocument();
@@ -89,6 +94,10 @@ describe("Academic Session review/create flow", () => {
     expect(screen.getByTestId("button-proceed-promote-students")).toBeInTheDocument();
     expect(screen.getByTestId("button-go-to-sessions")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("copy-modules"))).toBe(false);
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post).toBeDefined();
+    expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("copiedFromSessionId");
+    expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("copiedModules");
   });
 
   it("keeps promotion navigation explicit and does not execute promotion", async () => {
@@ -99,7 +108,7 @@ describe("Academic Session review/create flow", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/admin/promote"))).toBe(false);
   });
 
-  it("returns to Page 1 with all review values preserved", async () => {
+  it("returns to Page 1 with review values preserved and no stale source", async () => {
     mount("/admin-dashboard/school-setup/session-migration?name=2026-2027&start=2026-04-01&end=2027-03-31&copyFrom=12");
     fireEvent.click(await screen.findByTestId("button-step2-previous"));
     await screen.findByTestId("sessions-route");
@@ -108,8 +117,21 @@ describe("Academic Session review/create flow", () => {
     expect(params.get("name")).toBe("2026-2027");
     expect(params.get("start")).toBe("2026-04-01");
     expect(params.get("end")).toBe("2027-03-31");
-    expect(params.get("copyFrom")).toBe("12");
+    expect(params.has("copyFrom")).toBe(false);
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("shows no copy controls on Page 1 and advances without creating a session", async () => {
+    mount("/admin-dashboard/academic-sessions?restoreCreate=1&name=2026-2027&start=2026-04-01&end=2027-03-31&copyFrom=12");
+    expect(await screen.findByTestId("button-modal-save")).toBeInTheDocument();
+    expect(screen.queryByTestId("toggle-copy-prev")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("select-copy-source")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Copy Configuration|Copy From Session|Copy Center/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("button-modal-save"));
+    expect(await screen.findByText("Review New Academic Session")).toBeInTheDocument();
+    expect(screen.queryByText(/Copy source:/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    expect(new URLSearchParams(window.location.search).has("copyFrom")).toBe(false);
   });
 
   it("keeps Back to Academic Sessions available on the success screen", async () => {
