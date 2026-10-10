@@ -1,0 +1,229 @@
+# BENIUS — ACADEMIC SESSION CREATION WIZARD SIMPLIFICATION
+
+## MODE: STRICT READ-ONLY AUDIT — NO IMPLEMENTATION
+
+### 1. BACKGROUND
+
+Application: BENIUS School Management System
+
+Location:
+Admin Portal → School Setup → Academic Sessions → New Session
+
+Currently, the Session Migration Wizard contains three pages:
+
+**Page 1 — Session Details**
+- Session Name
+- Start Date
+- End Date
+- Copy configuration from previous academic session
+- Copy From Session selection
+
+**Page 2 — Reset Overview**
+- Source and target session information
+- Session-Based Reset Configuration
+- Session-Archived Modules (11 modules)
+- Global Data (7 permanent frameworks)
+- Technical explanations about what resets and what remains preserved
+
+**Page 3 — Summary**
+- Session creation success confirmation
+- New session Draft status
+- Global Data — Not Reset
+- Session-Archived Data
+- Detailed technical module lists
+- Proceed to Promote Students button
+- Back to Academic Sessions button
+
+### 2. BUSINESS REQUIREMENT
+
+The current wizard displays too much technical information to the Principal.
+
+The Principal does not need to understand internal database separation, global frameworks, archived data classifications or technical reset mechanisms.
+
+We want a clean, simple, professional and user-friendly experience.
+
+**CRITICAL: This is a frontend UI simplification only.**
+
+The underlying backend functionality, data preservation, Academic Session behavior and security rules must remain exactly as they are.
+
+### 3. PAGE-WISE REQUIREMENTS
+
+#### PAGE 1 — SESSION DETAILS
+
+Keep the existing functionality:
+
+- Session Name
+- Start Date
+- End Date
+- Copy configuration from previous academic session
+- Copy From Session selection
+- Existing date validation
+- Existing navigation and creation workflow
+
+Preserve the Configuration Copy Center and its existing behavior.
+
+Do not change which configurations are copied, when they are copied or how they are selected.
+
+#### PAGE 2 — RESET OVERVIEW
+
+The Principal should not see technical lists such as:
+
+- Session-Based Reset Configuration
+- Session-Archived Modules
+- 11 Modules — Data Tagged & Preserved per Session
+- Global Data
+- 7 Permanent Frameworks
+- Detailed technical module descriptions
+
+Investigate whether these sections are purely informational.
+
+If they are informational only, recommend hiding them and simplifying this step.
+
+If Page 2 performs an essential operation, identify that operation and recommend a simpler presentation without removing the functionality.
+
+Do not assume this step can safely be deleted without tracing its dependencies.
+
+#### PAGE 3 — SUMMARY
+
+Keep this page as a simple, professional session creation success screen.
+
+The Principal should see:
+
+- Session created successfully
+- Newly created Academic Session name
+- Session start and end dates
+- Clear Draft status
+- A short reassurance that previous Academic Session records remain preserved
+
+Hide the lengthy technical sections:
+
+- Global Data — Not Reset
+- Session-Archived Data
+- Detailed global framework lists
+- Detailed archived module lists
+
+**TWO CRITICAL BUTTONS MUST REMAIN:**
+
+**Button 1 — Proceed to Promote Students**
+- Keep the exact existing functionality.
+- Preserve navigation to the Student Promotion Wizard.
+- Ensure the correct newly created target Academic Session ID is passed.
+- Do not automatically execute student promotion.
+- Do not change promotion rules, calculations or eligibility.
+
+**Button 2 — Back to Academic Sessions**
+- Keep the exact existing functionality.
+- Preserve navigation to the Academic Sessions page.
+
+Do not remove or disable either button.
+
+### 4. CONFIGURATION COPY CENTER — CRITICAL
+
+The current wizard allows copying configuration from a previous Academic Session and refers to a Configuration Copy Center.
+
+Investigate:
+
+1. When the new Academic Session is actually created.
+2. When the Configuration Copy Center becomes available.
+3. Whether the Principal must visit the Copy Center before promotion.
+4. Whether simplifying or skipping Page 2 affects the Copy Center.
+5. Whether the existing source and target Academic Session IDs remain correct.
+6. Whether configuration copying is automatic, manual or a combination of both.
+
+The proposed UI changes must not remove, skip or accidentally execute configuration-copy operations.
+
+### 5. BACKEND AND SECURITY — MUST REMAIN UNCHANGED
+
+Preserve:
+
+- Multi-tenant school isolation.
+- Academic Session ID isolation.
+- Only one active Academic Session per school.
+- Draft session creation behavior.
+- Archived Academic Sessions remaining read-only.
+- Historical academic records.
+- Session-specific records and configurations.
+- Global school data.
+- Existing Student Promotion Wizard functionality.
+- Existing Configuration Copy Center functionality.
+- Existing validation, permissions and authentication.
+- Existing API contracts.
+
+Creating a new session must not modify, reset, delete or overwrite historical data.
+
+### 6. READ-ONLY INVESTIGATION REQUIRED
+
+Inspect the relevant frontend and backend code and report:
+
+1. Exact files and components responsible for the three wizard pages.
+2. What each Next, Back, Create, Finish and navigation button does.
+3. Whether Page 2 contains functional operations or only informational UI.
+4. Whether Page 3 contains functional operations beyond its navigation buttons.
+5. The exact point at which the new Academic Session is saved.
+6. How the newly created Academic Session ID is passed to the Promotion Wizard.
+7. How the Configuration Copy Center is opened and receives source/target session IDs.
+8. Whether a simpler two-stage Principal experience is safe.
+9. Risks involving refresh, duplicate submission, incomplete creation, Draft status or navigation.
+10. The minimum frontend-only changes needed to simplify the experience.
+
+### 7. RECOMMENDED PRINCIPAL EXPERIENCE
+
+Evaluate whether the safest final design can be:
+
+**Stage 1 — Create Academic Session**
+
+A simple form with session details and configuration-copy options.
+
+**Stage 2 — Session Created Successfully**
+
+A clean confirmation screen with:
+
+- New session information
+- Draft status
+- Proceed to Promote Students
+- Back to Academic Sessions
+
+If the existing workflow requires an intermediate step, recommend the safest simplified alternative.
+
+Do not remove essential operations merely to achieve two stages.
+
+### 8. STRICT SAFETY RULES
+
+DO NOT:
+
+- Modify any code or tests.
+- Change any database schema or records.
+- Execute SQL writes or migrations.
+- Create, activate, archive or delete Academic Sessions.
+- Run the Student Promotion Wizard.
+- Trigger configuration copying.
+- Change API behavior or backend logic.
+- Modify authentication or security guards.
+- Restart any workflow.
+- Change environment variables or feature flags.
+- Deploy or publish anything.
+- Touch Production.
+- Touch Mobile.
+
+This task is an investigation only.
+
+### 9. FINAL REPORT FORMAT
+
+Provide a concise report containing:
+
+1. **Current Wizard Architecture:** Files and components involved.
+2. **Page 2:** Informational or functional?
+3. **Page 3:** Informational or functional?
+4. **Session Creation:** Exactly when the database insert occurs.
+5. **Configuration Copy Center:** How it is triggered and what must be preserved.
+6. **Promotion Button:** How the newly created session ID is passed.
+7. **Recommended Simplified UI:** Safest page-by-page design.
+8. **Risk Assessment:** Any functionality that could break.
+9. **Files Required for Future UI Changes:** Exact paths.
+10. **Confirmation:** No changes made.
+
+**STOP AFTER THE READ-ONLY AUDIT AND WAIT FOR MY EXPLICIT APPROVAL BEFORE IMPLEMENTATION.**
+
+FINAL OBJECTIVE:
+
+Make Academic Session creation simple for a Principal while preserving 100% of the existing backend functionality, Academic Session security, configuration-copy behavior and Student Promotion navigation.
