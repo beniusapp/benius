@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import { ADMIN_NOTICE_MAX_WORDS, countWords } from "@/lib/teacher-field-limits";
 
 interface Props {
   schoolId: number;
@@ -155,7 +156,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
 
   // "class_only" is a frontend-only sentinel; backend always receives "class"
   const isClassTarget = targetType === "class" || targetType === "class_only";
-  const canPost = !!content.trim() &&
+  const canPost = !!content.trim() && countWords(content) <= ADMIN_NOTICE_MAX_WORDS &&
     !(isClassTarget && !targetClass) &&
     !(targetType === "class" && !targetSection);
 
@@ -301,6 +302,9 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
           className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 min-h-[100px]"
           data-testid="textarea-notice-content"
         />
+        <p className="text-xs text-white/45" aria-live="polite" data-testid="notice-word-count">
+          {countWords(content)}/{ADMIN_NOTICE_MAX_WORDS} words
+        </p>
 
         <Button
           disabled={!canPost || postMutation.isPending || !canCreate || isArchiveMode}
@@ -548,10 +552,13 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                         data-testid={`textarea-edit-notice-${n.id}`}
                         autoFocus
                       />
+                      <p className="text-xs text-white/45" aria-live="polite" data-testid={`edit-notice-word-count-${n.id}`}>
+                        {countWords(editContent)}/{ADMIN_NOTICE_MAX_WORDS} words
+                      </p>
                       <div className="flex gap-2">
                         <button
                           onClick={() => editMutation.mutate({ id: n.id, content: editContent })}
-                          disabled={!editContent.trim() || editMutation.isPending || isArchiveMode}
+                          disabled={!editContent.trim() || countWords(editContent) > ADMIN_NOTICE_MAX_WORDS || editMutation.isPending || isArchiveMode}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] text-xs font-semibold disabled:opacity-50 transition-colors"
                           data-testid={`button-save-notice-${n.id}`}
                         >

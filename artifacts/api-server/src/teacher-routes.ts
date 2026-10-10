@@ -9,7 +9,13 @@ import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
 import multer from "multer";
 import {
+  ADMIN_EBOOK_MAX_BYTES,
+  ADMIN_GALLERY_MAX_IMAGES,
+  ADMIN_NOTICE_MAX_WORDS,
+  isWithinWordLimit,
   exceedsTeacherWordLimit,
+  GALLERY_DESCRIPTION_MAX_WORDS,
+  isAdminGalleryBatchValid,
   isTeacherGalleryBatchValid,
   TEACHER_EBOOK_MAX_BYTES,
   TEACHER_GALLERY_IMAGE_MAX_BYTES,
@@ -533,7 +539,7 @@ export async function resolveTimetableSessionId(
   return active.id;
 }
 
-const diskUpload = multer({
+const createDiskUpload = (maxFileSize: number) => multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
       const dir = path.join(process.cwd(), "uploads");
@@ -545,8 +551,12 @@ const diskUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: TEACHER_EBOOK_MAX_BYTES },
+  limits: { fileSize: maxFileSize },
 });
+// Keep the shared uploader's historical cap; larger e-books use route-specific middleware.
+const diskUpload = createDiskUpload(10 * 1024 * 1024);
+const ebookUpload = createDiskUpload(TEACHER_EBOOK_MAX_BYTES);
+const adminEbookUpload = createDiskUpload(ADMIN_EBOOK_MAX_BYTES);
 
 // Dedicated uploader for teacher profile pictures.
 const teacherProfilePhotoUpload = multer({
@@ -583,8 +593,8 @@ const teacherGalleryUpload = multer({
   }),
   limits: {
     fileSize: TEACHER_GALLERY_IMAGE_MAX_BYTES,
-    files: TEACHER_GALLERY_MAX_IMAGES,
-    parts: TEACHER_GALLERY_MAX_IMAGES + 7,
+    files: ADMIN_GALLERY_MAX_IMAGES,
+    parts: ADMIN_GALLERY_MAX_IMAGES + 7,
   },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
@@ -600,8 +610,8 @@ const galleryUploadMiddleware = (middleware: RequestHandler): RequestHandler => 
         && ["LIMIT_UNEXPECTED_FILE", "LIMIT_FILE_COUNT"].includes(error.code);
       res.status(tooLarge ? 413 : 400).json({
         message: tooLarge
-          ? "Each gallery image must be 10 MB or smaller."
-          : tooMany ? "A maximum of 5 images can be uploaded at once." : error.message || "Gallery upload failed",
+          ? "Each gallery image must be 5 MB or smaller."
+          : tooMany ? "A maximum of 10 images can be uploaded at once." : error.message || "Gallery upload failed",
       });
       return;
     }
@@ -1932,6 +1942,14 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(400).json({ message: "Invalid schoolId." });
     }
 
+    if (!teacherContext && (typeof content !== "string" || !content.trim())) {
+      removeStagedNoticeUpload(req);
+      return res.status(400).json({ message: "Content is required." });
+    }
+    if (!teacherContext && !isWithinWordLimit(content!, ADMIN_NOTICE_MAX_WORDS)) {
+      removeStagedNoticeUpload(req);
+      return res.status(400).json({ message: `Notice content must be ${ADMIN_NOTICE_MAX_WORDS} words or fewer.` });
+    }
     if (!teacherContext) {
       const authenticatedSchoolId = await resolveAuthenticatedNoticeSchoolId(req, res);
       if (authenticatedSchoolId === null) {
@@ -2164,7 +2182,10 @@ export function registerTeacherRoutes(app: Express) {
       : parseInt(rawId, 10);
     if (id === null || Number.isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const { content } = req.body;
-    if (!content || !content.trim()) return res.status(400).json({ message: "Content is required" });
+    if (typeof content !== "string" || !content.trim()) return res.status(400).json({ message: "Content is required" });
+    if (!teacherContext && !isWithinWordLimit(content, ADMIN_NOTICE_MAX_WORDS)) {
+      return res.status(400).json({ message: `Notice content must be ${ADMIN_NOTICE_MAX_WORDS} words or fewer.` });
+    }
     if (teacherContext) {
       const notice = await storage.getNoticeById(id);
       if (!notice) return res.status(404).json({ message: "Notice not found" });
@@ -2961,6 +2982,10 @@ export function registerTeacherRoutes(app: Express) {
 
     const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
+    if (description != null && (typeof description !== "string" || !isWithinWordLimit(description, GALLERY_DESCRIPTION_MAX_WORDS))) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort staged-file cleanup */ }
+      return res.status(400).json({ message: `Gallery description must be ${GALLERY_DESCRIPTION_MAX_WORDS} words or fewer.` });
+    }
 
     const sid = parseInt(schoolId);
     if (req.session.teacherId) {
@@ -3001,16 +3026,34 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && req.session.userRole === "support_staff"
       && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     next();
-  }, galleryUploadMiddleware(teacherGalleryUpload.array("images", TEACHER_GALLERY_MAX_IMAGES)), async (req, res) => {
+  }, galleryUploadMiddleware(teacherGalleryUpload.array("images", ADMIN_GALLERY_MAX_IMAGES)), async (req, res) => {
     const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
-    if (!isTeacherGalleryBatchValid(files.map(file => file.size))
-      || files.reduce((total, file) => total + file.size, 0) > TEACHER_GALLERY_MAX_TOTAL_BYTES) {
-      return res.status(400).json({ message: "Upload up to 5 images, each 5 MB or smaller, with no more than 25 MB combined." });
+    const fileSizes = files.map(file => file.size);
+    const validBatch = req.session.teacherId
+      ? isTeacherGalleryBatchValid(fileSizes)
+        && files.length <= TEACHER_GALLERY_MAX_IMAGES
+        && files.reduce((total, file) => total + file.size, 0) <= TEACHER_GALLERY_MAX_TOTAL_BYTES
+      : isAdminGalleryBatchValid(fileSizes);
+    if (!validBatch) {
+      files.forEach(file => { try { fs.unlinkSync(file.path); } catch { /* best-effort staged-file cleanup */ } });
+      return res.status(400).json({
+        message: req.session.teacherId
+          ? "Upload up to 5 images, each 5 MB or smaller, with no more than 25 MB combined."
+          : "Upload up to 10 images, each 5 MB or smaller, with no more than 50 MB combined.",
+      });
     }
 
     const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
+    if (description != null && typeof description !== "string") {
+      files.forEach(file => { try { fs.unlinkSync(file.path); } catch { /* best-effort staged-file cleanup */ } });
+      return res.status(400).json({ message: "Gallery description must be text." });
+    }
+    if (!isWithinWordLimit(typeof description === "string" ? description : "", GALLERY_DESCRIPTION_MAX_WORDS)) {
+      files.forEach(file => { try { fs.unlinkSync(file.path); } catch { /* best-effort staged-file cleanup */ } });
+      return res.status(400).json({ message: `Gallery description must be ${GALLERY_DESCRIPTION_MAX_WORDS} words or fewer.` });
+    }
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
 
     const sid = parseInt(schoolId);
@@ -3197,11 +3240,11 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.post("/api/library/ebooks", (req, res, next) => {
-    diskUpload.single("file")(req, res, (error) => {
+    ebookUpload.single("file")(req, res, (error) => {
       if (error) {
         const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
         res.status(tooLarge ? 413 : 400).json({
-          message: tooLarge ? "E-Book file must be 10 MB or smaller." : error.message || "Upload failed",
+          message: tooLarge ? "E-Book file must be 15 MB or smaller." : error.message || "Upload failed",
         });
         return;
       }
@@ -3292,7 +3335,18 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.userRole === "support_staff"
       && !requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
     next();
-  }, diskUpload.single("file"), async (req, res) => {
+  }, (req, res, next) => {
+    adminEbookUpload.single("file")(req, res, (error) => {
+      if (error) {
+        const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
+        res.status(tooLarge ? 413 : 400).json({
+          message: tooLarge ? "E-Book file must be 15 MB or smaller." : error.message || "Upload failed",
+        });
+        return;
+      }
+      next();
+    });
+  }, async (req, res) => {
     const isSupportStaff = req.session.userRole === "support_staff";
     if (!req.file) return res.status(400).json({ message: "File required" });
     const { title, author, targetClass, category } = req.body;

@@ -1,0 +1,196 @@
+BENIUS — FINAL COMBINED ADMIN & TEACHER PORTAL UPLOAD AND WORD LIMITS
+
+Implement the following 9 requirements in the existing BENIUS Web application.
+
+IMPORTANT:
+This prompt replaces all previous versions of the Admin/Teacher upload-limit requirements.
+
+The Admin Gallery must allow 10 images at 5 MB each.
+The Teacher Gallery must remain at 5 images at 5 MB each.
+
+Do not confuse these two limits.
+
+Inspect only the relevant frontend components and backend endpoints. Implement directly without another broad architecture audit.
+
+## 1. PRINCIPAL PROFILE — DIGITAL SIGNATURE
+
+Location: Admin Dashboard → Principal Profile → Profile
+
+- Maximum file size: 5 MiB (5,242,880 bytes).
+- Display "Max 5 MB".
+- Reject oversized files on frontend and backend.
+- Preserve existing image formats, profile functionality and signature workflow.
+
+## 2. PRINCIPAL PROFILE — SCHOOL LOGO
+
+Location: Admin Dashboard → Principal Profile → School
+
+- Maximum file size: 10 MiB (10,485,760 bytes).
+- Display "Max 10 MB".
+- Validate frontend and backend.
+- Preserve existing image formats, school logo replacement/removal and school identity functionality.
+
+## 3. ADMIN NOTICEBOARD
+
+Location: Admin Dashboard → Noticeboard → Post New Notice
+
+Field: Notice Content
+
+- Maximum 2,000 WORDS.
+- Display a live counter: 0/2000.
+- Update the counter during typing, deletion and pasting.
+- Reject submissions exceeding 2,000 words.
+- Enforce the limit on the backend.
+- Preserve notice audience, category, publication and notification behavior.
+
+## 4. ADMIN APPROVAL CENTER — GALLERY UPLOAD
+
+Location: Admin Dashboard → Approval Center → Gallery → Upload Photos
+
+FINAL REQUIREMENT:
+- Maximum 10 images per upload.
+- Maximum 5 MiB (5,242,880 bytes) per image.
+- Maximum combined file payload: 50 MiB.
+- Display "Up to 10 images • Max 5 MB each".
+
+VALIDATION:
+- Accept up to 10 valid images.
+- Reject an 11th image.
+- Reject any image exceeding 5 MiB.
+- Enforce count and file-size limits on frontend and backend.
+- Ensure multipart upload handling can process a valid 10-image batch without unnecessarily increasing unrelated global limits.
+- If an external proxy limit prevents a valid 50 MiB batch, report the limitation rather than bypassing infrastructure safeguards.
+
+PRESERVE:
+- Existing supported image formats.
+- Album/Image Title.
+- Event Name.
+- Captured Date and Time.
+- Location/Venue.
+- Existing Gallery approval and publication behavior.
+
+IMPORTANT:
+These 10-image limits apply ONLY to the Admin Gallery.
+
+Teacher Gallery must remain limited to 5 images, 5 MiB each.
+
+## 5. ADMIN GALLERY — DESCRIPTION
+
+Location: Admin Dashboard → Approval Center → Gallery → Upload Photos
+
+Field: Description
+
+- Maximum 1,000 WORDS.
+- Display live counter: 0/1000.
+- Enforce frontend and backend validation.
+- Preserve optional-field behavior.
+- Do not silently truncate text.
+
+## 6. ADMIN APPROVAL CENTER — E-LIBRARY
+
+Location: Admin Dashboard → Approval Center → E-Library → Upload E-Book
+
+- Maximum file size: 15 MiB (15,728,640 bytes).
+- Display "Max 15 MB".
+- Enforce frontend and backend validation.
+- Preserve PDF/EPUB formats, class targeting and categories.
+- Preserve the existing Admin direct-catalog publication behavior.
+
+## 7. TEACHER PORTAL — E-LIBRARY
+
+Location: /teacher-dashboard/library → Upload E-Book
+
+- Maximum file size: 15 MiB (15,728,640 bytes).
+- Display "Max 15 MB".
+- Enforce frontend and backend validation.
+- Preserve PDF/EPUB formats, class targeting and categories.
+- Teacher uploads must continue requiring Principal approval.
+
+## 8. TEACHER PORTAL — GALLERY DESCRIPTION
+
+Location: /teacher-dashboard/gallery → Upload Photos
+
+Field: Description
+
+- Maximum 1,000 WORDS.
+- Display live counter: 0/1000.
+- Enforce frontend and backend validation.
+- Preserve optional-field behavior.
+
+IMPORTANT:
+Do not change the existing Teacher Gallery file limits:
+- Maximum 5 images.
+- Maximum 5 MiB per image.
+- Maximum combined file payload: 25 MiB.
+
+Preserve Teacher Gallery approval workflow.
+
+## 9. ADMIN FEES MANAGER — FEE RECEIPT SIGNATURE
+
+Location: /admin-dashboard/fees-manager → Fee Receipt Signature
+
+- Maximum file size: 5 MiB (5,242,880 bytes).
+- Display "Max 5 MB".
+- Apply to both initial upload and Replace Signature.
+- Reject oversized files on frontend and backend.
+- Preserve PNG/JPG/WEBP support.
+- Preserve replacement and removal behavior.
+- Preserve existing fee receipt generation and Authorized Accounts Signatory functionality.
+- Do not modify historical fee transactions or receipts.
+
+This is separate from the Principal Profile Digital Signature.
+
+## SHARED IMPLEMENTATION RULES
+
+- 1 MiB = 1,048,576 bytes.
+- Count words using trimmed whitespace-separated text.
+- Empty text counts as zero words.
+- Use independent live word counters for each field.
+- Prevent over-limit direct API submissions before saving.
+- Do not silently truncate text.
+- Preserve existing required/optional validation.
+- Enforce Admin and Teacher Gallery limits separately, even if they share a backend handler.
+- Do not change Student Portal limits.
+- Preserve authenticated school/tenant isolation and Academic Session ID scoping where applicable.
+- Do not modify existing data or uploaded files.
+- No database schema changes or migrations.
+
+## TESTING
+
+Verify the following boundaries:
+
+1. Principal Signature: 5 MiB accepted; one byte above rejected.
+2. School Logo: 10 MiB accepted; one byte above rejected.
+3. Noticeboard: 2,000 words accepted; 2,001 rejected.
+4. Admin Gallery: 10 images accepted; 11 rejected.
+5. Admin Gallery: 5 MiB per image accepted; one byte above rejected.
+6. Teacher Gallery: 5 images accepted; 6 rejected.
+7. Admin/Teacher Gallery descriptions: 1,000 words accepted; 1,001 rejected.
+8. Admin/Teacher E-Books: 15 MiB accepted; one byte above rejected.
+9. Fee Receipt Signature: 5 MiB accepted; one byte above rejected.
+10. Confirm direct API validation cannot be bypassed.
+11. Confirm existing workflows remain unchanged.
+
+Run focused Web/API tests, Web/API builds and git diff --check.
+
+## STRICT SAFETY
+
+- Development code changes only.
+- No SQL execution, database migrations or schema changes.
+- No modification of existing records.
+- No Production or Mobile changes.
+- No deployment or publishing.
+- No service restart without explicit approval.
+- Do not modify unrelated modules.
+
+## FINAL REPORT
+
+1. Files changed.
+2. Status of all 9 requirements.
+3. Frontend and backend validation results.
+4. Tests and build results.
+5. Admin versus Teacher Gallery limits confirmed separately.
+6. Any infrastructure limitations.
+7. Whether a Development API restart is required.
+
+Implement all requirements, then STOP and wait for my approval before restarting or deploying.

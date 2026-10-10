@@ -157,7 +157,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Validation Error", description: "Please select a PDF or EPUB file.", variant: "destructive" }); return;
     }
     if (exceedsTeacherUploadLimit(ebookFile, TEACHER_EBOOK_MAX_BYTES)) {
-      toast({ title: "File too large", description: "E-Book files must be 10 MB or smaller.", variant: "destructive" });
+      toast({ title: "File too large", description: "E-Book files must be 15 MB or smaller.", variant: "destructive" });
       return;
     }
     const formData = new FormData();
@@ -538,7 +538,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     onChange={e => {
                       const file = e.target.files?.[0] || null;
                       if (file && exceedsTeacherUploadLimit(file, TEACHER_EBOOK_MAX_BYTES)) {
-                        toast({ title: "File too large", description: "E-Book files must be 10 MB or smaller.", variant: "destructive" });
+                        toast({ title: "File too large", description: "E-Book files must be 15 MB or smaller.", variant: "destructive" });
                         e.currentTarget.value = "";
                         setEbookFile(null);
                         return;
@@ -550,7 +550,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     data-testid="input-ebook-file"
                   />
                 </label>
-                <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Max 10 MB</p>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Max 15 MB</p>
               </div>
 
               <div className="px-3 py-2.5 rounded-xl text-xs" style={{ background: "rgba(20,184,166,0.06)", border: "1px solid rgba(20,184,166,0.14)", color: "rgba(255,255,255,0.45)" }}>

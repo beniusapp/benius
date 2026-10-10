@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { FEE_RECEIPT_SIGNATURE_MAX_BYTES } from "./teacher-field-limits";
 import { storage } from "./storage";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { db } from "./db";
@@ -179,7 +180,7 @@ async function removeSignatureBackground(inputPath: string, outputPath: string):
   }
 }
 
-// ── Fee receipt signature uploader — 2 MB, images only, staged to temp ──────
+// ── Fee receipt signature uploader — 5 MB, images only, staged to temp ──────
 const feeReceiptSigUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -192,7 +193,7 @@ const feeReceiptSigUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: FEE_RECEIPT_SIGNATURE_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowed.includes(file.mimetype)) cb(null, true);
@@ -2510,7 +2511,7 @@ export function registerFeesRoutes(app: Express) {
   const sigMulterMiddleware = (req: any, res: any, next: any) => {
     feeReceiptSigUpload.single("file")(req, res, (err: any) => {
       if (err && err.code === "LIMIT_FILE_SIZE")
-        return res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+        return res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
       if (err)
         return res.status(400).json({ message: err.message || "Upload error" });
       next();

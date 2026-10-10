@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { markAdminIdsSeen, useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
+import { ADMIN_EBOOK_MAX_BYTES, ADMIN_GALLERY_MAX_IMAGES, GALLERY_DESCRIPTION_MAX_WORDS, countWords, isAdminGalleryBatchValid } from "@/lib/teacher-field-limits";
 
 interface Props { schoolId: number; adminId: number; sessionId: number | null; unreadGallery: boolean; unreadEbooks: boolean; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; isArchiveMode?: boolean; }
 
@@ -319,7 +320,14 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []).slice(0, 10);
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    if (!isAdminGalleryBatchValid(files)) {
+      toast({ title: files.length > ADMIN_GALLERY_MAX_IMAGES ? "Too many images" : "Invalid image selection",
+        description: "Select up to 10 images, each 5 MB or smaller, with no more than 50 MB combined.", variant: "destructive" });
+      e.currentTarget.value = "";
+      return;
+    }
     setSelectedFiles(files);
     setPreviews(files.map(f => URL.createObjectURL(f)));
   }
@@ -327,6 +335,10 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
   async function handleUpload() {
     if (!title.trim() || selectedFiles.length === 0) {
       toast({ title: "Required fields missing", description: "Add a title and select at least one image.", variant: "destructive" });
+      return;
+    }
+    if (!isAdminGalleryBatchValid(selectedFiles) || countWords(description) > GALLERY_DESCRIPTION_MAX_WORDS) {
+      toast({ title: "Validation error", description: "Check the image limits and keep the optional description to 1,000 words or fewer.", variant: "destructive" });
       return;
     }
     setIsUploading(true);
@@ -964,6 +976,9 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
             <div>
               <label className="text-xs font-semibold text-gray-600 mb-1 block">Description</label>
               <Textarea placeholder="Brief description (optional)…" value={description} onChange={e => setDescription(e.target.value)} className="resize-none" rows={2} data-testid="input-hub-gallery-desc" />
+              <p className="mt-1 text-xs text-gray-500" aria-live="polite" data-testid="admin-gallery-description-word-count">
+                {countWords(description)}/{GALLERY_DESCRIPTION_MAX_WORDS} words
+              </p>
             </div>
             <div>
               <button
@@ -976,9 +991,11 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
                 <Images className="w-4 h-4 inline mr-2" />
                 {selectedFiles.length
                   ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected`
-                  : "Select Images (up to 10)"}
+                  : "Up to 10 images • Max 5 MB each"}
               </button>
-              <input type="file" ref={fileRef} accept="image/*" multiple className="hidden" onChange={handleFileSelect} data-testid="input-hub-gallery-file" />
+              <p className="mt-1 text-xs text-gray-500">Up to 10 images • Max 5 MB each</p>
+              <input type="file" ref={fileRef} accept="image/*" multiple className="hidden" onChange={handleFileSelect} data-max-files={ADMIN_GALLERY_MAX_IMAGES} data-testid="input-hub-gallery-file" />
+              <p className="mt-1 text-xs text-gray-500">Maximum combined file payload: 50 MB.</p>
             </div>
             {previews.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -1804,9 +1821,20 @@ export default function ApprovalCenter({ schoolId, adminId, sessionId, initialSe
                       {adminEbookFile ? `${adminEbookFile.name} (${(adminEbookFile.size / 1024 / 1024).toFixed(2)} MB)` : "Choose PDF or EPUB file…"}
                     </span>
                     <input ref={adminEbookFileRef} type="file" accept=".pdf,.epub" className="hidden"
-                      onChange={e => setAdminEbookFile(e.target.files?.[0] || null)}
+                      onChange={e => {
+                        const file = e.target.files?.[0] || null;
+                        if (file && file.size > ADMIN_EBOOK_MAX_BYTES) {
+                          toast({ title: "File too large", description: "E-Book files must be 15 MB or smaller.", variant: "destructive" });
+                          e.currentTarget.value = "";
+                          setAdminEbookFile(null);
+                          return;
+                        }
+                        setAdminEbookFile(file);
+                      }}
+                      data-max-bytes={ADMIN_EBOOK_MAX_BYTES}
                       data-testid="input-admin-ebook-file" />
                   </label>
+                  <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Max 15 MB</p>
                 </div>
 
                 <div className="px-3 py-2.5 rounded-xl text-xs"

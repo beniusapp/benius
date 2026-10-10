@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { isTeacherGalleryBatchValid, TEACHER_GALLERY_IMAGE_MAX_BYTES, TEACHER_GALLERY_MAX_IMAGES } from "@/lib/teacher-field-limits";
+import { countWords, GALLERY_DESCRIPTION_MAX_WORDS, isTeacherGalleryBatchValid, TEACHER_GALLERY_IMAGE_MAX_BYTES, TEACHER_GALLERY_MAX_IMAGES } from "@/lib/teacher-field-limits";
 import { queryClient } from "@/lib/queryClient";
 import { fmtDate } from "@/lib/dateUtils";
 import { useArchiveMode } from "@/pages/teacher-dashboard";
@@ -136,6 +136,10 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
   };
 
   const handleUpload = async () => {
+    if (countWords(description) > GALLERY_DESCRIPTION_MAX_WORDS) {
+      toast({ title: "Description too long", description: "Gallery descriptions must be 1,000 words or fewer.", variant: "destructive" });
+      return;
+    }
     try {
       await doUpload();
       toast({ title: "Upload Successful", description: "Images submitted for approval." });
@@ -325,6 +329,9 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
                 rows={2}
                 data-testid="input-gallery-description"
               />
+              <p className="mt-1 text-xs text-gray-500" aria-live="polite" data-testid="gallery-description-word-count">
+                {countWords(description)}/{GALLERY_DESCRIPTION_MAX_WORDS} words
+              </p>
             </div>
 
             <div>

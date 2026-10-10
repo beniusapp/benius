@@ -667,8 +667,8 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
       toast({ title: "Unsupported format", description: "Please choose a JPG, PNG, or WebP image.", variant: "destructive" });
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum allowed size is 5 MB.", variant: "destructive" });
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 10 MB.", variant: "destructive" });
       return;
     }
     const reader = new FileReader();
@@ -718,8 +718,8 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
       toast({ title: "Unsupported format", description: "Please choose a PNG, JPG, or WebP image.", variant: "destructive" });
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum allowed size is 2 MB.", variant: "destructive" });
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 5 MB.", variant: "destructive" });
       return;
     }
     if (sigPreviewUrl) URL.revokeObjectURL(sigPreviewUrl);
@@ -944,7 +944,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 
               {/* Hint */}
               <p className="text-[10px] text-gray-400">
-                Accepted: PNG, JPG, WEBP &bull; Max 2 MB &bull; Recommended: PNG with transparent background
+                Accepted: PNG, JPG, WEBP &bull; Max 5 MB &bull; Recommended: PNG with transparent background
               </p>
 
               {/* Confirm removal */}
@@ -1021,7 +1021,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                           : <Building2 className="w-7 h-7 text-gray-300" />}
                       </div>
                       <div className="flex-1 min-w-0 space-y-2">
-                        <p className="text-[11px] text-gray-400 leading-snug">PNG, JPG or WebP · max 5 MB<br />Recommended: 512 × 512 px</p>
+                        <p className="text-[11px] text-gray-400 leading-snug">PNG, JPG or WebP · max 10 MB<br />Recommended: 512 × 512 px</p>
                         <div className="flex gap-2 flex-wrap">
                           <button type="button" onClick={() => logoFileInputRef.current?.click()} disabled={logoUploading}
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">

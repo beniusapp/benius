@@ -5873,8 +5873,8 @@ function ExternalPortalTab({
       toast({ title: "Unsupported format", description: "Please choose a PNG, JPG, or WebP image.", variant: "destructive" });
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum allowed size is 2 MB.", variant: "destructive" });
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 5 MB.", variant: "destructive" });
       return;
     }
     if (sigPreviewUrl) URL.revokeObjectURL(sigPreviewUrl);
@@ -6323,7 +6323,7 @@ function ExternalPortalTab({
               white or coloured background, remove the background before uploading.
             </p>
             <p className="text-white/30 text-[11px] pt-0.5">
-              Accepted: PNG, JPG, WEBP &bull; Max 2 MB
+              Accepted: PNG, JPG, WEBP &bull; Max 5 MB
             </p>
             <p className="text-purple-400/60 text-[11px]">Recommended: PNG with transparent background</p>
           </div>

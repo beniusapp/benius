@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { type Server } from "http";
+import { PRINCIPAL_SIGNATURE_MAX_BYTES, SCHOOL_LOGO_MAX_BYTES } from "../teacher-field-limits";
 import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
 import {
   AcademicSessionActivationBlockedError,
@@ -190,7 +191,7 @@ declare module "express-session" {
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-// School logo uploader — 5 MB cap, images only, temp staging in uploads/
+// School logo uploader — 10 MB cap, images only, temp staging in uploads/
 const schoolLogoUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -203,7 +204,7 @@ const schoolLogoUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: SCHOOL_LOGO_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowed.includes(file.mimetype)) cb(null, true);
@@ -211,7 +212,7 @@ const schoolLogoUpload = multer({
   },
 });
 
-// Principal signature uploader — 2 MB cap, images only, staged to temp then moved
+// Principal signature uploader — 5 MB cap, images only, staged to temp then moved
 const signatureUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -224,7 +225,7 @@ const signatureUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: PRINCIPAL_SIGNATURE_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowed.includes(file.mimetype)) cb(null, true);
@@ -966,7 +967,7 @@ export async function registerRoutes(
     await new Promise<void>((resolve, reject) => {
       schoolLogoUpload.single("file")(req, res, (err: any) => {
         if (err && err.code === "LIMIT_FILE_SIZE") {
-          res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
+          res.status(400).json({ message: "File too large. Maximum size is 10 MB." });
           return reject(null);
         }
         if (err) {
@@ -1032,7 +1033,7 @@ export async function registerRoutes(
     await new Promise<void>((resolve, reject) => {
       signatureUpload.single("file")(req, res, (err: any) => {
         if (err && err.code === "LIMIT_FILE_SIZE") {
-          res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+          res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
           return reject(null);
         }
         if (err) {
