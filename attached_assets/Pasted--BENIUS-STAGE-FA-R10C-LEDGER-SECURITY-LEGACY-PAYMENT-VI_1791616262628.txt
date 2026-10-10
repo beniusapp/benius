@@ -1,0 +1,398 @@
+# BENIUS — STAGE FA-R10C
+## LEDGER SECURITY, LEGACY PAYMENT VISIBILITY & ACADEMIC SESSION ISOLATION VERIFICATION
+
+### STRICT READ-ONLY — SYNTHETIC TESTING ONLY — NO FIXES AUTHORIZED
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+FA-R10B identified three source-level issues requiring further verification:
+
+1. A payment-list invoice join may expose another school's invoice number if payment and invoice school ownership disagree.
+2. A legacy payment with NULL `payment_records.session_id` may be omitted from an archived-session Ledger payment list even though its linked invoice identifies the correct session.
+3. A payment with a non-NULL session ID different from its invoice session may be attributed differently across Ledger, Analytics, and exports.
+
+The owner now authorizes a focused, non-destructive verification of these issues.
+
+**This stage does NOT authorize implementation.**
+
+## 1. Non-negotiable safety rules
+
+DO NOT:
+
+- Modify application code.
+- Modify permanent test files.
+- Modify database records.
+- Connect to the real financial database.
+- Create PostgreSQL databases or clusters.
+- Run migrations.
+- Execute startup backfills.
+- Update NULL session IDs.
+- Correct payment/invoice links.
+- Modify financial formulas.
+- Modify payment/refund processing.
+- Modify Academic Session records.
+- Modify enrollments.
+- Change permissions.
+- Change Ledger UI or exports.
+- Change Financial Analytics.
+- Deploy.
+- Restart workflows.
+- Trigger reminders, payments, or refunds.
+
+Temporary test scripts outside the repository are permitted.
+
+Use mocks or isolated in-memory fixtures only.
+
+If actual SQL execution requires a database engine that is unavailable without creating a database, report the limitation. Do not create one.
+
+## 2. Trace the actual Ledger payment-list query
+
+Inspect:
+
+- `artifacts/api-server/src/fees-routes.ts`
+- `artifacts/api-server/src/storage.ts`
+- Relevant query helpers and schema definitions.
+
+Identify the exact implementation of:
+
+`GET /api/admin/fees/payments`
+
+Trace:
+
+Authenticated School ID
+→ Selected Academic Session ID
+→ Payment query
+→ Payment-to-invoice join
+→ Student ownership
+→ Invoice number
+→ API response
+→ Ledger UI.
+
+Determine whether school and session isolation are enforced on both payment and invoice relationships.
+
+Record exact file paths and line numbers.
+
+## 3. Independently test six mandatory scenarios
+
+Create synthetic data for two schools and multiple Academic Sessions.
+
+### Scenario A — Normal archived payment
+
+School A:
+- Invoice belongs to Archived Session 2026–2027.
+- Payment belongs to School A.
+- Payment session is 2026–2027.
+- Payment links to the correct invoice.
+
+Expected:
+
+Payment appears in the 2026–2027 Ledger payment list.
+
+It must not appear in another school's Ledger.
+
+### Scenario B — Legacy NULL-session payment
+
+School A:
+- Invoice belongs to Archived Session 2026–2027.
+- Payment belongs to School A.
+- Payment `session_id = NULL`.
+- Payment links to the correct invoice and student.
+
+Verify whether the payment appears in:
+
+- Ledger payment list.
+- Ledger summary.
+- Financial Analytics.
+- Invoice detail.
+- CSV export.
+- PDF export.
+- Payment transaction report.
+
+Expected business ownership:
+
+The invoice belongs to 2026–2027, so the linked payment's financial ownership is associated with that invoice session.
+
+Do not modify the payment row.
+
+### Scenario C — Conflicting session IDs
+
+School A:
+- Invoice belongs to Archived Session 2026–2027.
+- Payment has `session_id = 2027–2028`.
+
+Verify:
+
+- Which session's Ledger list contains the payment.
+- Which session's summary contains it.
+- Which session's Analytics contains it.
+- Which session's exports contain it.
+- Whether a mismatch warning is available.
+
+Do not silently repair or normalize the record.
+
+Clearly distinguish observed current behavior from the recommended future policy.
+
+### Scenario D — Cross-school invoice link
+
+School A payment:
+- `payment_records.school_id = School A`.
+- Linked invoice belongs to School B.
+
+Verify whether the School A payment-list query can return:
+
+- School B invoice number.
+- School B student information.
+- School B invoice amount.
+- Any other School B metadata.
+
+Check whether the invoice join enforces both:
+
+- Matching invoice ID.
+- Matching school ownership.
+
+This is a security-sensitive scenario.
+
+**No cross-school invoice metadata should be exposed under any circumstances.**
+
+Do not use real school data.
+
+### Scenario E — Orphan payment
+
+School A payment:
+- Valid School A ownership.
+- No valid linked invoice.
+
+Verify how the payment is handled in:
+
+- Session-filtered payment lists.
+- Summaries.
+- Analytics.
+- Receipts.
+- Exports.
+
+Do not invent an invoice session for an orphan payment.
+
+### Scenario F — Processed refund on a legacy payment
+
+School A:
+- Archived-session invoice.
+- Linked payment with NULL session ID.
+- Processed refund associated with that invoice/payment.
+
+Verify:
+
+- Ledger payment-list inclusion.
+- Financial Analytics outstanding.
+- Ledger summary outstanding.
+- Ledger CSV/PDF outstanding.
+- Transaction report refund attribution.
+
+Do not change refund formulas.
+
+Report any disagreement separately.
+
+## 4. Verify actual query behavior where safely possible
+
+Prefer executing the actual query construction against deterministic mocked database responses.
+
+Where feasible, test the real query predicates using an existing safe in-memory SQL-capable test mechanism.
+
+Do not substitute a manually rewritten query and call it production-query verification.
+
+Do not mock away the WHERE or JOIN logic being tested.
+
+If SQL cannot be executed safely, report:
+
+- SOURCE CONFIRMED.
+- QUERY CONSTRUCTION VERIFIED.
+- ACTUAL SQL EXECUTION NOT VERIFIED.
+
+For each test provide expected versus actual behavior.
+
+## 5. Verify school isolation across read paths
+
+Inspect and test where feasible:
+
+- Ledger payment list.
+- Ledger financial summary.
+- Ledger CSV.
+- Ledger PDF.
+- Payment transaction PDF.
+- Invoice detail.
+- Payment receipt.
+- Financial Analytics comparison path.
+
+For every path determine:
+
+1. Does it derive school from authentication?
+2. Does the payment belong to that school?
+3. Does the linked invoice belong to that school?
+4. Does the student relationship belong to that school?
+5. Does the selected session match the authoritative invoice session?
+6. Can a mismatched record expose foreign-school metadata?
+7. Can it cause double-counting or inconsistent totals?
+
+Identify additional unsafe joins if discovered.
+
+Do not modify them.
+
+## 6. Verify legacy payment session handling
+
+Examine the exact semantics of:
+
+- NULL payment session.
+- Valid invoice session.
+- Conflicting non-NULL session.
+- NULL invoice session.
+- Missing invoice.
+- Cross-school invoice.
+- Cross-student invoice.
+- Multiple payments linked to one invoice.
+
+Distinguish a verified historical invoice relationship from an untrusted or ambiguous payment link.
+
+Do not treat NULL session as global.
+
+Do not automatically backfill archived payments.
+
+## 7. Evaluate a safe future correction
+
+Provide a proposal only.
+
+Assess whether a read-time query can:
+
+- Include NULL-session payments with a verified same-school, same-student invoice link.
+- Use the invoice's Academic Session for those verified legacy payments.
+- Exclude cross-school invoice metadata.
+- Avoid attributing conflicting non-NULL sessions silently.
+- Avoid including orphan payments in session-specific invoice totals.
+- Preserve every stored payment and refund amount.
+- Avoid modifying existing database records.
+
+Explain how a future correction would affect:
+
+- Ledger list.
+- Ledger summary.
+- Analytics.
+- CSV/PDF exports.
+- Receipts.
+- Historical reports.
+
+Identify where current reports might still disagree.
+
+**Do not implement the proposal.**
+
+## 8. Independent reconciliation matrix
+
+Create a matrix covering all six scenarios:
+
+| Scenario | Expected ownership | Ledger list | Ledger summary | Analytics | CSV/PDF | Security result | Evidence |
+
+Clearly label:
+
+- Confirmed by executable synthetic test.
+- Confirmed by source inspection.
+- Not verified.
+
+Do not mark a test PASS merely because the expected behavior was described.
+
+## 9. Regression requirements for any future implementation
+
+Design, but do not implement, regression checks for:
+
+- Normal active-session payments.
+- Normal archived-session payments.
+- Legacy NULL-session linked payments.
+- Conflicting non-NULL sessions.
+- Cross-school links.
+- Cross-student links.
+- Orphan payments.
+- Refunds.
+- Multiple payments per invoice.
+- Academic Session switching.
+- Payment-list pagination and totals.
+- CSV/PDF consistency.
+- Existing receipt behavior.
+- No changes to financial amounts.
+- No changes to payment/refund processing.
+
+## 10. Required final report
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Security findings
+
+For each issue provide:
+
+- Exact source location.
+- Preconditions.
+- Expected behavior.
+- Actual behavior.
+- Potential impact.
+- Verification evidence.
+- Severity.
+
+### C. Synthetic test results
+
+List every executed scenario, independent expected result, and actual result.
+
+### D. Academic Session ownership matrix
+
+Show payment session versus invoice session for all scenarios.
+
+### E. Cross-school exposure analysis
+
+Identify precisely which fields could be exposed and through which endpoint.
+
+### F. Ledger versus Analytics reconciliation
+
+Show where the existing read paths agree or disagree.
+
+### G. Minimal proposed corrections
+
+Separate:
+
+1. Mandatory tenant-isolation hardening.
+2. Legacy NULL-session payment visibility.
+3. Conflicting-session handling.
+
+Do not combine unrelated corrections.
+
+### H. Remaining limitations
+
+Identify anything not executed against actual SQL or authenticated routes.
+
+### I. Safety confirmation
+
+Confirm:
+
+- Application code changed: NO.
+- Permanent test files changed: NO.
+- Database accessed: NO.
+- Database modified: NO.
+- Financial formulas changed: NO.
+- Payment/refund processing changed: NO.
+- Startup backfill executed: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restarts: NO.
+
+## 11. Mandatory stop
+
+After the complete verification report, STOP.
+
+Do not fix the Ledger.
+
+Do not modify payment session attribution.
+
+Do not change invoice joins.
+
+Do not backfill financial records.
+
+Do not change Audit Log.
+
+Do not change Fee Structures.
+
+Wait for explicit owner approval.
