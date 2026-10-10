@@ -1,0 +1,290 @@
+# BENIUS — FA-R10E
+## POST-IMPLEMENTATION LEDGER SECURITY & SESSION ISOLATION REGRESSION AUDIT
+
+### STRICT READ-ONLY — NO CHANGES AUTHORIZED
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+FA-R10D implemented two approved changes:
+
+1. Ledger payment-list joins now require matching invoice/payment School ID and Student ID before exposing invoice metadata.
+2. Legacy payments with NULL session IDs may appear under their linked invoice's Academic Session, but only when the school/student/invoice relationship is verified.
+
+FA-R10D reported:
+- Five focused query-construction tests passed.
+- API build passed.
+- API-wide typecheck failed with 327 diagnostics.
+- No real database SQL execution occurred.
+- No financial records or formulas were modified.
+
+Your task is to independently audit the implementation and test its safety.
+
+DO NOT implement fixes.
+
+## 1. Mandatory restrictions
+
+DO NOT:
+
+- Modify application source or test files.
+- Modify database records or schema.
+- Connect to the real financial database.
+- Create databases or PostgreSQL clusters.
+- Execute startup backfills.
+- Run migrations.
+- Modify payments, invoices or refunds.
+- Change financial formulas.
+- Modify Academic Sessions or enrollments.
+- Change Ledger, Analytics or Mobile behavior.
+- Deploy or restart workflows.
+- Trigger payment, refund or reminder actions.
+
+Read-only commands, source inspection, existing safe tests and temporary non-persistent test scripts are permitted.
+
+## 2. Independently inspect FA-R10D
+
+Review:
+
+- `artifacts/api-server/src/fees-routes.ts`
+- `artifacts/api-server/src/storage.ts`
+- `artifacts/api-server/src/ledger-payment-list-query.ts`
+- `artifacts/api-server/src/ledger-payment-list-query.test.ts`
+
+Verify the implementation rather than relying only on the previous report.
+
+Check:
+
+- The Ledger route explicitly opts into the new read scope.
+- Other callers retain their previous default behavior.
+- The authenticated school controls the query.
+- The selected Academic Session is authorized for that school.
+- Invoice joins require matching School ID and Student ID.
+- Invalid invoice links cannot expose foreign invoice metadata.
+- NULL-session fallback requires a verified invoice.
+- Non-NULL session behavior remains unchanged.
+- No new financial calculations were introduced.
+
+Provide exact file and line references.
+
+## 3. Verify the actual SQL predicates
+
+Inspect the generated PostgreSQL query.
+
+Confirm the logical behavior is equivalent to:
+
+**Verified invoice join**
+
+payment.invoice_id = invoice.id
+AND payment.school_id = invoice.school_id
+AND payment.student_id = invoice.student_id
+
+**Selected-session payment eligibility**
+
+payment.session_id = selectedSessionId
+
+OR
+
+(
+  payment.session_id IS NULL
+  AND verifiedInvoice.session_id = selectedSessionId
+)
+
+The authenticated school must also constrain the payment population.
+
+This is a conceptual expression, not permission to replace the existing query.
+
+Check operator precedence, join placement, NULL handling and duplicate-row risks.
+
+Do not rewrite the query.
+
+## 4. Independent regression scenarios
+
+Evaluate these cases using the strongest safe test method available:
+
+| Scenario | Required outcome |
+|---|---|
+| Valid active-session payment | Included in active session |
+| Valid archived-session payment | Included in archived session |
+| Verified NULL-session archived payment | Included only in invoice's archived session |
+| Verified NULL-session active payment | Included only in invoice's active session |
+| Cross-school invoice link | No foreign invoice metadata or NULL fallback |
+| Cross-student invoice link | No unrelated student's invoice metadata or NULL fallback |
+| Orphan payment | No invented invoice-session ownership |
+| Conflicting non-NULL sessions | Existing payment-session behavior unchanged |
+| Multiple payments per invoice | No duplicate payment rows |
+| School switching | No cross-school exposure |
+| Academic Session switching | No unintended cross-session visibility |
+| Mobile/default caller | Existing behavior preserved |
+
+For every case, state whether it was:
+
+- Executed against an SQL engine.
+- Tested using generated SQL and synthetic response mapping.
+- Verified only by source inspection.
+- Not verified.
+
+Do not describe source inspection as an executed SQL test.
+
+## 5. Review the existing tests critically
+
+Determine whether the five FA-R10D tests genuinely verify:
+
+- Correct join predicates.
+- Correct selected-session predicates.
+- Correct NULL fallback.
+- Foreign invoice metadata suppression.
+- Cross-student metadata suppression.
+- Non-NULL session behavior.
+- Response compatibility.
+
+Identify missing assertions and potential false positives.
+
+Do not modify the tests in this stage.
+
+## 6. Review response mapping and API compatibility
+
+Check whether the Ledger API still returns the expected fields for valid payments.
+
+Verify:
+
+- Payment ID.
+- Payment amount.
+- Payment method.
+- Payment date.
+- Payment status.
+- Valid invoice number.
+- Valid invoice ID.
+- Student reference.
+- Existing sort order.
+
+For invalid links, verify foreign invoice metadata is suppressed without exposing it through another field.
+
+Check whether the frontend handles missing invoice metadata safely.
+
+Confirm whether pagination exists; do not assume it does.
+
+## 7. Verify Mobile isolation
+
+Inspect all callers of the shared storage method.
+
+Determine whether:
+
+- Only the intended Web Ledger route passes the new option.
+- Mobile/default callers preserve their previous SQL behavior.
+- No Mobile source files changed.
+- The shared helper introduces no unintended behavior for other routes.
+
+Do not modify Mobile code.
+
+## 8. Verify financial preservation
+
+Inspect the FA-R10D diff and relevant call paths.
+
+Confirm whether changes are restricted to:
+
+- Payment-list selection.
+- Invoice metadata join.
+- Response mapping.
+- Focused tests.
+
+Check that no changes were made to:
+
+- Invoice amounts.
+- Payment amounts.
+- Refund values.
+- Gross/Net Collected formulas.
+- Collection Efficiency.
+- Outstanding.
+- Overdue.
+- Aging.
+- Ledger summary.
+- Analytics.
+- CSV/PDF calculations.
+- Payment/refund processing.
+
+Do not run payment or refund operations.
+
+## 9. Investigate TypeScript diagnostics safely
+
+Review the API typecheck output.
+
+Determine:
+
+- Whether any diagnostic points to FA-R10D changed production files.
+- Whether any diagnostic is newly introduced.
+- Whether the 327 reported diagnostics can be compared against a reliable pre-change baseline.
+- Whether the new helper's types are consistent with its callers.
+
+Do not fix unrelated TypeScript errors.
+
+If no reliable baseline exists, do not claim every diagnostic is pre-existing.
+
+## 10. Required final report
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. FA-R10D implementation assessment
+
+Explain whether both approved corrections were implemented correctly.
+
+### C. Security verification
+
+Report cross-school and cross-student isolation findings.
+
+### D. Historical NULL-session verification
+
+Explain active and archived session behavior.
+
+### E. Regression matrix
+
+| Scenario | Expected | Observed | Evidence type | Verdict |
+
+### F. Existing test quality
+
+Identify strengths, missing assertions and false-positive risks.
+
+### G. Web/Mobile compatibility
+
+Identify every affected caller and whether default behavior is preserved.
+
+### H. Financial preservation
+
+Confirm whether all financial formulas and stored-record operations remain unchanged.
+
+### I. Build and TypeScript status
+
+Separate passing builds from failing typechecks.
+
+### J. Remaining risks
+
+Include:
+
+- Non-NULL session conflicts.
+- Other cross-student payment/attempt joins.
+- Student payment-attempt history.
+- Ledger CSV/PDF refund-outstanding differences.
+- Actual database reconciliation.
+- Any newly discovered FA-R10D regression.
+
+### K. Safety confirmation
+
+Confirm no code changes, database access, financial mutations, migrations, deployment or workflow restarts.
+
+## 11. Mandatory stop
+
+After completing the audit, STOP.
+
+Do not implement fixes.
+
+Do not change the database.
+
+Do not modify financial formulas.
+
+Do not modify the Mobile application.
+
+Do not modify the Audit Log.
+
+Do not expand the scope.
+
+Wait for owner approval.
