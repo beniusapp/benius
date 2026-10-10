@@ -15,6 +15,7 @@ import {
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
   CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen, Menu,
   CalendarRange, Check, Building2, Upload, Trash2,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,13 @@ import {
   hasSupportStaffModuleGrant,
   isSupportStaffParentOnlyModule,
 } from "@/lib/admin-tiles";
+import {
+  ADMIN_NOTIFICATION_QUERY_OPTIONS,
+  adminDashboardNotificationQueryKeys,
+  refetchAdminNotificationSources,
+  shouldShowAdminActionNotifications,
+  summarizeAdminNotifications,
+} from "@/lib/admin-dashboard-notifications";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -1758,55 +1766,143 @@ export default function AdminDashboard() {
     meta: { sessionScoped: true },
   });
 
-  const { data: pendingLeaves = [] } = useQuery<unknown[]>({
-    queryKey: ["/api/leave/school", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const r = await sessionFetch(`/api/leave/school/${me.schoolId}`);
-      return r.ok ? r.json() : [];
+  const notificationQueryKeys = adminDashboardNotificationQueryKeys(
+    me?.schoolId,
+    selectedViewSession?.id ?? null,
+  );
+  const notificationQueryOptions = ADMIN_NOTIFICATION_QUERY_OPTIONS;
+  const teacherLeavesQuery = useQuery<
+    { status?: string }[],
+    Error,
+    { status?: string }[],
+    typeof notificationQueryKeys.teacherLeaves
+  >({
+    queryKey: notificationQueryKeys.teacherLeaves,
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, sessionId] = queryKey;
+      if (!schoolId) return [];
+      const response = await sessionFetchForViewSession(
+        `/api/leave/school/${schoolId}`,
+        sessionId,
+        { signal },
+      );
+      if (!response.ok) throw new Error("Teacher leave count unavailable");
+      return response.json();
     },
     enabled: !!me?.schoolId,
+    ...notificationQueryOptions,
+  });
+  const studentLeavesQuery = useQuery<
+    { status?: string }[],
+    Error,
+    { status?: string }[],
+    typeof notificationQueryKeys.studentLeaves
+  >({
+    queryKey: notificationQueryKeys.studentLeaves,
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, sessionId] = queryKey;
+      if (!schoolId) return [];
+      const response = await sessionFetchForViewSession(
+        `/api/student-leaves/school/${schoolId}`,
+        sessionId,
+        { signal },
+      );
+      if (!response.ok) throw new Error("Student leave count unavailable");
+      return response.json();
+    },
+    enabled: !!me?.schoolId,
+    ...notificationQueryOptions,
+  });
+  const galleryQuery = useQuery<
+    { approved?: boolean }[],
+    Error,
+    { approved?: boolean }[],
+    typeof notificationQueryKeys.gallery
+  >({
+    queryKey: notificationQueryKeys.gallery,
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId] = queryKey;
+      if (!schoolId) return [];
+      const response = await sessionFetch(`/api/gallery/${schoolId}?all=true`, { signal });
+      if (!response.ok) throw new Error("Gallery approval count unavailable");
+      return response.json();
+    },
+    enabled: !!me?.schoolId,
+    ...notificationQueryOptions,
+  });
+  const ebooksQuery = useQuery<
+    { verificationStatus?: string }[],
+    Error,
+    { verificationStatus?: string }[],
+    typeof notificationQueryKeys.ebooks
+  >({
+    queryKey: notificationQueryKeys.ebooks,
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId] = queryKey;
+      if (!schoolId) return [];
+      const response = await sessionFetch(`/api/library/books/${schoolId}/pending`, { signal });
+      if (!response.ok) throw new Error("E-book approval count unavailable");
+      return response.json();
+    },
+    enabled: !!me?.schoolId,
+    ...notificationQueryOptions,
+  });
+  const complaintsQuery = useQuery<
+    { status?: string }[],
+    Error,
+    { status?: string }[],
+    typeof notificationQueryKeys.complaints
+  >({
+    queryKey: notificationQueryKeys.complaints,
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, sessionId] = queryKey;
+      if (!schoolId) return [];
+      const response = await sessionFetchForViewSession(
+        `/api/complaints/school/${schoolId}`,
+        sessionId,
+        { signal },
+      );
+      if (!response.ok) throw new Error("Complaint count unavailable");
+      return response.json();
+    },
+    enabled: !!me?.schoolId,
+    ...notificationQueryOptions,
   });
 
-  const { data: forwardedStudentLeaves = [] } = useQuery<unknown[]>({
-    queryKey: ["/api/student-leaves/school", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const r = await sessionFetch(`/api/student-leaves/school/${me.schoolId}`);
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!me?.schoolId,
+  const notificationSummary = summarizeAdminNotifications({
+    teacherLeaves: teacherLeavesQuery,
+    studentLeaves: studentLeavesQuery,
+    gallery: galleryQuery,
+    ebooks: ebooksQuery,
+    complaints: complaintsQuery,
   });
-
-  const { data: galleryItems = [] } = useQuery<unknown[]>({
-    queryKey: ["/api/gallery", me?.schoolId, "all"],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const r = await sessionFetch(`/api/gallery/${me.schoolId}?all=true`);
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: pendingEbooks = [] } = useQuery<unknown[]>({
-    queryKey: ["/api/library/books", me?.schoolId, "pending"],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const r = await sessionFetch(`/api/library/books/${me.schoolId}/pending`);
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: complaints = [] } = useQuery<unknown[]>({
-    queryKey: ["/api/complaints/school", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const r = await sessionFetch(`/api/complaints/school/${me.schoolId}`);
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!me?.schoolId,
-  });
+  const pendingNotificationCount = notificationSummary.total;
+  const actionCountAnimated = useCountUp(pendingNotificationCount ?? 0);
+  const notificationQueries = [
+    teacherLeavesQuery,
+    studentLeavesQuery,
+    galleryQuery,
+    ebooksQuery,
+    complaintsQuery,
+  ];
+  const refetchNotificationQueries = useCallback(
+    () => refetchAdminNotificationSources(notificationQueries.map(query => query.refetch)),
+    [
+      teacherLeavesQuery.refetch,
+      studentLeavesQuery.refetch,
+      galleryQuery.refetch,
+      ebooksQuery.refetch,
+      complaintsQuery.refetch,
+    ],
+  );
+  const previousActiveModule = useRef(activeModule);
+  useEffect(() => {
+    const revisitedDashboard = activeModule === "grid" && previousActiveModule.current !== "grid";
+    previousActiveModule.current = activeModule;
+    if (revisitedDashboard) {
+      void refetchNotificationQueries();
+    }
+  }, [activeModule, refetchNotificationQueries]);
 
   const { data: sessions = [], isLoading: isSessionsLoading } = useQuery<AcademicSession[]>({
     queryKey: ["/api/admin/academic-sessions", me?.schoolId],
@@ -1835,22 +1931,24 @@ export default function AdminDashboard() {
 
   const isArchiveMode = selectedViewSession ? !selectedViewSession.isActive : false;
 
-  const pendingLeavesCount          = (pendingLeaves          as { status: string }[]).filter(l => l.status === "pending").length;
-  const forwardedStudentLeavesCount = (forwardedStudentLeaves as unknown[]).length;
-  const pendingGalleryCount         = (galleryItems           as { approved: boolean }[]).filter(g => !g.approved).length;
-  const openComplaintsCount         = (complaints             as { status: string }[]).filter(c => c.status === "open" || c.status === "in_progress").length;
-  const totalActionRequired         = pendingLeavesCount + forwardedStudentLeavesCount + pendingGalleryCount + pendingEbooks.length;
-
-  const BADGES: Record<string, number> = {
-    approvals:        pendingGalleryCount + pendingEbooks.length,
-    "leave-requests": pendingLeavesCount + forwardedStudentLeavesCount,
-    complaints:       openComplaintsCount,
+  const totalActionRequired = pendingNotificationCount;
+  const BADGES: Record<string, number | undefined> = {
+    approvals: notificationSummary.parentBadges["approval-center"],
+    "leave-requests": notificationSummary.parentBadges["leave-requests"],
+    complaints: notificationSummary.parentBadges["complaint-hub"],
+  };
+  const failedNotificationSources = notificationSummary.sources.filter(source => source.state === "error");
+  const loadingNotifications = notificationSummary.sources.some(source => source.state === "loading");
+  const knownPendingActions = notificationSummary.sources.some(source => (source.count ?? 0) > 0);
+  const hasPendingActions = (totalActionRequired ?? 0) > 0;
+  const refreshingNotifications = notificationQueries.some(query => query.isFetching);
+  const refreshNotifications = () => {
+    void refetchNotificationQueries();
   };
 
   const studentCountAnimated   = useCountUp(me?.studentCount ?? 0);
   const facultyCountAnimated   = useCountUp(teachersList.length);
   const attendancePctAnimated  = useCountUp(dailySummary?.percentage ?? 0, 1100, 1);
-  const actionCountAnimated    = useCountUp(totalActionRequired);
 
   const logoutMutation = useMutation({
     mutationFn: async () => { await apiRequest("POST", "/api/logout"); },
@@ -2286,52 +2384,112 @@ export default function AdminDashboard() {
             })()}
 
             {/* Action Required — hidden for support_staff (count spans all categories, not just their allowed ones) */}
-            {me?.role !== "support_staff" && <div
-              className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:bg-red-500/12"
+            {shouldShowAdminActionNotifications(me?.role) && <div
+              className="min-w-0 rounded-xl px-4 py-3"
               style={{
-                background: totalActionRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${totalActionRequired > 0 ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.06)"}`,
+                background: hasPendingActions ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${hasPendingActions ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.06)"}`,
               }}
-              onClick={() => goToModule("approval-center")}
               data-testid="stat-action-required"
             >
-              <StatRing
-                value={Math.min(actionCountAnimated, 10)}
-                max={10}
-                color={totalActionRequired > 0 ? "#ef4444" : "#4b5563"}
-                icon={
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={totalActionRequired > 0 ? {
-                      opacity: 1,
-                      scale: 1,
-                      rotateZ: [0, 14, -14, 10, -10, 6, -6, 0],
-                    } : { opacity: 1, scale: 1, rotateZ: 0 }}
-                    transition={totalActionRequired > 0 ? {
-                      opacity: { duration: 0.35, delay: 0.3 },
-                      scale: { duration: 0.35, delay: 0.3 },
-                      rotateZ: { type: "spring", stiffness: 260, damping: 18, repeat: Infinity, repeatDelay: 2.3, delay: 0.55 },
-                    } : { opacity: { duration: 0.35, delay: 0.3 }, scale: { duration: 0.35, delay: 0.3 } }}
-                    style={{
-                      filter: totalActionRequired > 0
-                        ? "drop-shadow(0 0 5px #ef4444aa)"
-                        : "drop-shadow(0 0 3px #4b556388)",
-                      transformOrigin: "top center",
-                    }}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-3">
+                  <StatRing
+                    value={Math.min(totalActionRequired ?? 0, 10)}
+                    max={10}
+                    color={hasPendingActions ? "#ef4444" : "#4b5563"}
+                    icon={
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.5 }}
+                        animate={hasPendingActions ? {
+                          opacity: 1,
+                          scale: 1,
+                          rotateZ: [0, 14, -14, 10, -10, 6, -6, 0],
+                        } : { opacity: 1, scale: 1, rotateZ: 0 }}
+                        transition={hasPendingActions ? {
+                          opacity: { duration: 0.35, delay: 0.3 },
+                          scale: { duration: 0.35, delay: 0.3 },
+                          rotateZ: { type: "spring", stiffness: 260, damping: 18, repeat: Infinity, repeatDelay: 2.3, delay: 0.55 },
+                        } : { opacity: { duration: 0.35, delay: 0.3 }, scale: { duration: 0.35, delay: 0.3 } }}
+                        style={{
+                          filter: hasPendingActions
+                            ? "drop-shadow(0 0 5px #ef4444aa)"
+                            : "drop-shadow(0 0 3px #4b556388)",
+                          transformOrigin: "top center",
+                        }}
+                      >
+                        <Bell
+                          size={17}
+                          color={hasPendingActions ? "#ef4444" : "#6b7280"}
+                          strokeWidth={1.8}
+                        />
+                      </motion.div>
+                    }
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Action Required</p>
+                    <p className={`text-xl font-extrabold tracking-tight ${hasPendingActions ? "text-red-400" : "text-white"}`}>
+                      {totalActionRequired === undefined ? "—" : actionCountAnimated}
+                    </p>
+                    <p className="text-[10px] text-white/35">
+                      {notificationSummary.complete ? "Verified pending actions" : "Complete total unavailable"}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={refreshNotifications}
+                  disabled={refreshingNotifications}
+                  className="shrink-0 text-white/60 hover:text-white"
+                  data-testid="button-refresh-action-required"
+                  aria-label="Refresh Action Required counts"
+                >
+                  <RefreshCw className={`h-4 w-4 ${refreshingNotifications ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+
+              {failedNotificationSources.length > 0 && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200/90"
+                  role="alert" data-testid="action-required-error">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Could not refresh: {failedNotificationSources.map(source => source.label).join(", ")}.
+                    {knownPendingActions ? " Available counts are shown; the total is incomplete." : " Pending work is not fully verified."}
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-3 space-y-1.5">
+                {notificationSummary.sources.filter(source => (source.count ?? 0) > 0).map(source => (
+                  <button
+                    key={source.id}
+                    type="button"
+                    onClick={() => setLocation(source.destination)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                    data-testid={`action-required-${source.id}`}
                   >
-                    <Bell
-                      size={17}
-                      color={totalActionRequired > 0 ? "#ef4444" : "#6b7280"}
-                      strokeWidth={1.8}
-                    />
-                  </motion.div>
-                }
-              />
-              <div className="min-w-0">
-                <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Action Required</p>
-                <p className={`text-xl font-extrabold tracking-tight ${totalActionRequired > 0 ? "text-red-400" : "text-white"}`}>
-                  {actionCountAnimated}
-                </p>
+                    <span className="min-w-0 truncate text-xs text-white/80">{source.label}</span>
+                    <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-red-300">
+                      {source.count}
+                      <ArrowRight className="h-3 w-3" />
+                    </span>
+                  </button>
+                ))}
+
+                {notificationSummary.complete && totalActionRequired === 0 ? (
+                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-empty">
+                    No pending actions.
+                  </p>
+                ) : loadingNotifications && !knownPendingActions ? (
+                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-loading">
+                    Checking for pending work…
+                  </p>
+                ) : !knownPendingActions && failedNotificationSources.length === 0 && !notificationSummary.complete ? (
+                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-loading">
+                    Pending work is still being checked.
+                  </p>
+                ) : null}
               </div>
             </div>}
 

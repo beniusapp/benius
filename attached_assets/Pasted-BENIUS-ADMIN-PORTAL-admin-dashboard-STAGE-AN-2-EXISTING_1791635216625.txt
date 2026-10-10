@@ -1,0 +1,148 @@
+BENIUS — ADMIN PORTAL → /admin-dashboard
+
+STAGE AN-2: EXISTING NOTIFICATIONS AND ACTION REQUIRED CORRECTION
+
+MODE: FOCUSED IMPLEMENTATION
+
+The Stage AN-1 read-only investigation is complete.
+
+Implement OPTION A only. Do not perform another broad audit.
+
+OBJECTIVE:
+
+Correct the existing Admin Dashboard notification badges and Action Required section without changing approval workflows or introducing new notification sources.
+
+1. ACTION REQUIRED — INDIVIDUAL ITEMS
+
+Replace the existing single-destination Action Required behavior with a clear breakdown of actionable pending work.
+
+Include these five existing sources:
+
+- Pending Teacher Leave Applications.
+- Student Leave Applications forwarded to Admin.
+- Unapproved Gallery items.
+- Pending E-Book approvals.
+- Open or In-Progress Complaints.
+
+Show each source separately with its pending count.
+
+Show the combined total without double-counting records.
+
+Do not count informational or already-resolved records.
+
+2. CORRECT NAVIGATION
+
+Each Action Required item must navigate to its owning Admin module:
+
+- Teacher Leave → Leave Requests → Teacher Leave.
+- Student Leave → Leave Requests → Student Leave.
+- Gallery → Approval Center → Gallery Hub.
+- E-Book → Approval Center → E-Book Library.
+- Complaints → Complaint Hub.
+
+Use the existing Admin Dashboard navigation mechanism and actual module/tab identifiers.
+
+Verify that navigation reaches the intended destination rather than merely opening the parent module when a supported submodule target exists.
+
+Preserve existing permission checks.
+
+3. RED-DOT / NUMERIC BADGE CONSISTENCY
+
+Preserve existing numeric badge styling.
+
+Ensure parent module badges and Action Required counts derive from the same underlying pending-action data.
+
+- Leave Requests = Pending Teacher + Forwarded Student Leave.
+- Approval Center = Unapproved Gallery + Pending E-Books.
+- Complaint Hub = Open/In-Progress Complaints.
+- Action Required = Sum of these five actionable sources.
+
+Do not add new badges to Exam Controller, ID Card Generator, or unrelated modules.
+
+Opening a module must not clear unresolved pending work.
+
+4. ACADEMIC SESSION ISOLATION
+
+For session-owned sources, include the selected Academic Session ID in React Query keys and preserve the existing selected-session API context.
+
+Ensure switching Academic Sessions does not display cached notification counts from the previous session.
+
+Preserve authenticated School ID isolation.
+
+For school-level sources such as Gallery and E-Books, preserve their existing school-wide scope. Do not artificially filter them by Academic Session.
+
+Do not modify backend authorization or database records unless a concrete issue is confirmed that prevents this focused correction; report such a blocker instead.
+
+5. REFRESH AND ERROR HANDLING
+
+The existing global React Query configuration uses staleTime: Infinity and does not automatically poll or refetch on window focus.
+
+Implement a small, deliberate freshness mechanism for these dashboard notification queries.
+
+Requirements:
+
+- Refresh when the Admin Dashboard is opened or revisited.
+- Refresh after relevant actions performed within the current application where existing invalidation hooks are available.
+- Allow a manual refresh if appropriate.
+- Do not introduce aggressive polling or unnecessary repeated requests.
+- Do not display an API failure as zero pending work.
+- Clearly distinguish loading, error and genuine zero-pending states.
+- Preserve successful counts when another source fails, but do not present the aggregate as a verified complete total if a required source failed.
+
+6. UI BEHAVIOR
+
+Keep the existing Admin Dashboard design and responsive layout.
+
+Make Action Required understandable and clickable.
+
+If there are no pending actions, show an appropriate empty state.
+
+If only some sources have pending work, display only those actionable items while preserving error visibility for failed sources.
+
+Do not redesign the whole dashboard.
+
+7. FOCUSED TESTS
+
+Add side-effect-free regression tests covering:
+
+- All five Action Required sources.
+- Correct total and parent badge calculations.
+- Correct destination for each item.
+- Complaint inclusion.
+- School and selected Academic Session query keys.
+- Session switching without stale counts.
+- School-wide Gallery/E-Book behavior.
+- Refresh behavior.
+- Loading, empty, partial-error and complete-error states.
+- Existing permission restrictions.
+- No clearing of unresolved work merely by opening a module.
+
+Run focused tests and available Web build.
+
+8. STRICT RULES
+
+- Development source changes only.
+- No database or schema changes.
+- No approval, complaint, leave, gallery or e-book record mutations.
+- Do not change approval workflows.
+- Do not change notification counts by manually editing data.
+- Do not add Exam Controller or ID Card Generator notifications.
+- Do not change financial formulas.
+- Do not restart the API or other workflows.
+- Do not deploy or publish.
+- Do not modify Production.
+- Do not work on Mobile.
+- Do not perform another broad audit.
+
+9. FINAL REPORT
+
+A. Files changed.
+B. Action Required items and navigation implemented.
+C. Parent badge and aggregate count behavior.
+D. Academic Session and School isolation.
+E. Refresh and error-handling behavior.
+F. Focused test results.
+G. Web build results.
+H. Remaining blockers or limitations.
+
+STOP after reporting. Do not restart or deploy.
