@@ -1,0 +1,84 @@
+BENIUS — STUDENT PORTAL → FEES
+
+STAGE SF-R3C: CONSOLIDATED DEVELOPMENT STARTUP SAFETY
+
+The read-only startup review is complete.
+
+OBJECTIVE:
+Safely prepare the Development API to load the completed Student Fees corrections without automatically modifying existing database records.
+
+TASK 1 — CENTRALIZED STARTUP GUARD
+
+Implement one Development-only setting:
+
+BENIUS_DEV_STARTUP_MAINTENANCE_DISABLED
+
+Behavior:
+- In Development, unset or true = automatic startup data maintenance disabled.
+- Only explicit false enables maintenance.
+- In Production, preserve existing startup behavior.
+
+Apply this guard to all automatic startup data-writing maintenance identified in the previous review, including:
+- Security-audit data updates and leave-policy seeding.
+- Legacy leave-status conversions.
+- Receipt sequence initialization.
+- Dunning status initialization and stage normalization.
+- Fee-audit currency backfills.
+- Payment-record reconstruction.
+- Payment Academic Session backfills.
+- User/payment-attempt/event reconciliation.
+
+Ensure the guard covers indirectly invoked startup maintenance functions too.
+
+Do not disable normal authenticated API operations.
+
+TASK 2 — PRESERVE EXISTING SAFETY
+
+Preserve:
+- BENIUS_DEV_REMINDERS_DISABLED
+- BENIUS_DEV_OVERDUE_CHECK_DISABLED
+
+Do not change their existing behavior.
+
+TASK 3 — SCHEMA INITIALIZATION REVIEW
+
+Inspect the remaining startup schema DDL, session-store initialization, and ensureMobileAuthSchema().
+
+Determine whether these can execute without changing existing database objects.
+
+Do not simply disable required schema initialization if doing so would break application startup.
+
+If safety cannot be established from code alone, report the exact read-only SQL checks needed.
+
+Do not execute database queries without separate authorization.
+
+TASK 4 — TESTS
+
+Add focused, mocked tests proving:
+- Development startup maintenance is disabled by default.
+- Explicit false enables maintenance in Development.
+- Production behavior is preserved.
+- Disabled maintenance does not invoke data-writing reconciliation functions.
+- Existing reminder and overdue safeguards remain effective.
+
+STRICT RULES:
+
+- Development source changes only.
+- Do not modify existing database records or schema.
+- Do not run migrations or reconciliation.
+- Do not restart services.
+- Do not deploy or publish.
+- Do not modify financial formulas or normal payment routes.
+- Do not work on Mobile.
+- Do not perform another broad audit.
+
+REPORT:
+
+A. Files changed.
+B. Startup maintenance operations protected.
+C. Test and build results.
+D. Remaining schema initialization risks.
+E. Exact read-only checks required, if any.
+F. Whether Development restart is safe: YES/NO.
+
+Do not restart automatically. Wait for owner approval.
