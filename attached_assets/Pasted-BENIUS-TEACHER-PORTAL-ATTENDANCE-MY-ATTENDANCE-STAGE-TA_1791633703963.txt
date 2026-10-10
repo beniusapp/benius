@@ -1,0 +1,69 @@
+BENIUS — TEACHER PORTAL → ATTENDANCE → MY ATTENDANCE
+
+STAGE TA-3: QUICK LEAVE APPLICATION AND ATTENDANCE SYNC CHECK
+
+MODE: READ-ONLY. NO CODE CHANGES.
+
+REQUIREMENT:
+
+When a Teacher applies for leave through Teacher Portal → Leave, the leave application should also be reflected appropriately in Teacher Portal → Attendance → My Attendance.
+
+QUICKLY VERIFY:
+
+1. When a Teacher submits a Leave Application:
+   - Does it immediately appear in My Attendance?
+   - Does it show as Pending Leave?
+   - Or does nothing appear until approval?
+
+2. When the Principal/Admin approves the leave:
+   - Does My Attendance automatically show Leave for the approved dates?
+   - Are existing attendance records preserved correctly?
+   - Does the attendance history update?
+
+3. When a Leave Application is rejected:
+   - Does My Attendance reflect the rejection?
+   - Is any existing attendance status incorrectly changed?
+
+4. Check how the system handles:
+   - Single-day leave.
+   - Multiple-day leave.
+   - Half-day leave, if supported.
+   - Past and future leave dates.
+
+5. Verify that leave applications and attendance records use the correct:
+   - Teacher ID.
+   - School ID.
+   - Academic Session ID.
+   - IST attendance dates.
+
+6. Check whether the My Attendance page reads Leave Applications directly or only reads Teacher Self-Attendance records.
+
+IMPORTANT BUSINESS RULE:
+
+A Pending Leave Application must be visible to the Teacher as Pending, but must NOT automatically count as approved Leave or change attendance percentage.
+
+Approved Leave should be reflected in attendance according to the existing approved-leave synchronization logic.
+
+Rejected Leave must not be counted as approved Leave.
+
+Do not overwrite existing Present, Late or Half Day attendance records.
+
+REPORT BRIEFLY:
+
+A. Current behavior for Pending / Approved / Rejected Leave.
+B. Whether My Attendance displays leave application status.
+C. Whether approved leave synchronizes correctly.
+D. Confirmed gaps, with file and line references.
+E. Smallest recommended correction, if needed.
+
+STRICT RULES:
+
+- Read-only source inspection only.
+- No database queries or mutations.
+- No attendance or leave record changes.
+- No changes to attendance formulas or policies.
+- No API restart or deployment.
+- No Mobile work.
+- No broad audit.
+
+Stop after reporting.
