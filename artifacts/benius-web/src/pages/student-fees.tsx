@@ -10,7 +10,8 @@ import {
   XCircle, RotateCcw, X, ReceiptText,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { getQueryFn, sessionFetch } from "@/lib/queryClient";
+import { getQueryFn, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
+import { isRefundedPaidInvoiceWithBalance } from "@/lib/student-fees-display";
 import { useSessionView } from "@/contexts/session-view-context";
 import {
   classifyStudentPaymentAttempt,
@@ -205,6 +206,11 @@ interface PaymentAttempt {
   refundArn: string | null;          // ARN for processed refund
   attemptNumber: number | null;      // 1-based sequence for this fee record
   orderNotes: Record<string, any> | null; // Razorpay order notes object
+  academicSessionLabel?: string | null;
+  className?: string | null;
+  sectionName?: string | null;
+  rollNumber?: number | null;
+  historicalPlacementAvailable?: boolean;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -215,13 +221,13 @@ function formatAmount(amount: number) {
   }).format(amount);
 }
 
-function openSessionDocument(url: string) {
+function openSessionDocument(url: string, sessionId: number | null | undefined) {
   const popup = window.open("", "_blank");
   if (!popup) return;
 
   popup.document.title = "Loading document…";
   popup.document.body.innerHTML = "<p style='font-family:system-ui;padding:24px'>Loading document…</p>";
-  void sessionFetch(url)
+  void sessionFetchForViewSession(url, sessionId)
     .then(async (response) => {
       if (!response.ok) throw new Error("Unable to open document");
       const blobUrl = URL.createObjectURL(await response.blob());
@@ -574,7 +580,12 @@ function downloadPaymentPDF(
     doc.text(wrapped, colValue, y);
     y += Math.max(wrapped.length * 5, 6);
   };
-
+  sectionHeader("ACADEMIC SESSION & HISTORICAL PLACEMENT");
+  row("Academic Session", attempt.academicSessionLabel ?? "Historical session unavailable");
+  row("Class", attempt.historicalPlacementAvailable ? attempt.className ?? "—" : "Historical placement unavailable");
+  row("Section", attempt.historicalPlacementAvailable ? attempt.sectionName ?? "—" : "—");
+  row("Roll Number", attempt.historicalPlacementAvailable && attempt.rollNumber != null ? String(attempt.rollNumber) : "—");
+  y += 2;
   const outcomeMap: Record<string, string> = {
     captured: "Captured", failed: "Failed", cancelled: "Cancelled",
     authorized: "Authorized", refunded: "Refunded", pending: "Pending",
@@ -1257,6 +1268,13 @@ export default function StudentFees() {
 
   const { data: feeRecords = [], isLoading: feesLoading, refetch: refetchFees } = useQuery<FeeRecord[]>({
     queryKey: ["/api/student/fees", sessionCacheId],
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/student/fees", selectedSession?.id, { signal },
+      );
+      if (!response.ok) throw new Error("Failed to load fees");
+      return response.json();
+    },
     enabled: !!student && !!selectedSession,
     staleTime: 0,               // always treat as stale — payment status must never be served from cache
     refetchOnWindowFocus: true, // re-check status the moment the student returns to this tab
@@ -1264,6 +1282,13 @@ export default function StudentFees() {
 
   const { data: feesSummary, refetch: refetchSummary } = useQuery<FeesSummary>({
     queryKey: ["/api/student/fees/summary", sessionCacheId],
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/student/fees/summary", selectedSession?.id, { signal },
+      );
+      if (!response.ok) throw new Error("Failed to load fee summary");
+      return response.json();
+    },
     enabled: !!student && !!selectedSession,
     staleTime: 0,
     refetchOnWindowFocus: true,
@@ -1278,12 +1303,26 @@ export default function StudentFees() {
 
   const { data: notificationHistory = [], isLoading: notifLoading } = useQuery<NotificationHistoryEntry[]>({
     queryKey: ["/api/student/fees/notification-history", sessionCacheId],
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/student/fees/notification-history", selectedSession?.id, { signal },
+      );
+      if (!response.ok) throw new Error("Failed to load reminder history");
+      return response.json();
+    },
     enabled: !!student && !!selectedSession,
     staleTime: 30_000,
   });
 
   const { data: paymentAttempts = [], isLoading: attemptsLoading } = useQuery<PaymentAttempt[]>({
     queryKey: ["/api/student/fees/payment-attempts", sessionCacheId],
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/student/fees/payment-attempts", selectedSession?.id, { signal },
+      );
+      if (!response.ok) throw new Error("Failed to load payment history");
+      return response.json();
+    },
     enabled: !!student && !!selectedSession,
     staleTime: 0,
     refetchOnWindowFocus: true,
@@ -1321,7 +1360,7 @@ export default function StudentFees() {
 
     try {
       await loadRazorpayScript();
-      const resp = await sessionFetch("/api/payments/create-order", {
+      const resp = await sessionFetchForViewSession("/api/payments/create-order", selectedSession?.id, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ feeRecordId: rec.id }),
@@ -1374,7 +1413,7 @@ export default function StudentFees() {
             // Immediately verify via our endpoint — no 15 s polling wait.
             // Falls back to a plain refetch if verify fails (webhook may have
             // already run, making the fee Paid anyway).
-            sessionFetch("/api/payments/verify", {
+            sessionFetchForViewSession("/api/payments/verify", selectedSession?.id, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1416,7 +1455,7 @@ export default function StudentFees() {
                 // different one without waiting for the 10-minute checkout
                 // window to elapse.  The endpoint is a no-op if the fee is
                 // already Paid (status guard on the server prevents the UPDATE).
-                sessionFetch("/api/payments/clear-failed-order", {
+                sessionFetchForViewSession("/api/payments/clear-failed-order", selectedSession?.id, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -1448,7 +1487,7 @@ export default function StudentFees() {
           const errStep        = response?.error?.step        ?? "";
           const errReason      = response?.error?.reason      ?? "";
           const rzpPaymentId   = response?.error?.metadata?.payment_id ?? "";
-          sessionFetch("/api/payments/clear-failed-order", {
+          sessionFetchForViewSession("/api/payments/clear-failed-order", selectedSession?.id, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1511,7 +1550,7 @@ export default function StudentFees() {
       // so there is no stale spinner risk on the student's next visit.
       if (isMountedRef.current) setPayingFeeId(null);
     }
-  }, [portalInfo, refetchFees, queryClient]);
+  }, [portalInfo, refetchFees, queryClient, selectedSession]);
 
 
   // ── Loading splash ───────────────────────────────────────────────────────────
@@ -1541,7 +1580,10 @@ export default function StudentFees() {
   const totalPaid   = feeRecords.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const overdueCount = feeRecords.filter(r => r.status === "Overdue").length;
   const paidRecords = feeRecords.filter(r => r.status === "Paid");
-  const pendingRecords = feeRecords.filter(r => r.status !== "Paid");
+  const pendingRecords = feeRecords.filter(r =>
+    r.status !== "Paid" || isRefundedPaidInvoiceWithBalance(r as any)
+  );
+  const isRefundedBalance = isRefundedPaidInvoiceWithBalance;
   const razorpayActive = !isArchiveMode && (portalInfo?.razorpayEnabled ?? false) && !!portalInfo?.razorpayKeyId;
 
   const tabs = [
@@ -1905,6 +1947,11 @@ export default function StudentFees() {
                                   Fee Period: {(rec as any).feePeriodLabel}
                                 </p>
                               )}
+                              {isRefundedBalance(rec) && (
+                                <p className="mt-1 text-xs font-bold text-amber-700" data-testid={`text-refunded-balance-${rec.id}`}>
+                                  Refunded balance due: {formatAmount(Number((rec as any).refund_adjusted_total_due))}
+                                </p>
+                              )}
                               <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                 <CalendarDays className="w-3 h-3 flex-shrink-0" />
                                 Due {formatDate(rec.dueDate)}
@@ -1957,7 +2004,7 @@ export default function StudentFees() {
                               {/* View Invoice — opens the server-rendered invoice in a new tab */}
                               {rec.invoiceNumber && (
                                 <button
-                                  onClick={() => openSessionDocument(`/api/student/fees/${rec.id}/invoice`)}
+                                  onClick={() => openSessionDocument(`/api/student/fees/${rec.id}/invoice`, selectedSession?.id)}
                                   className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all active:scale-95"
                                   style={{
                                     background: "#f5f3ff",
@@ -1969,7 +2016,7 @@ export default function StudentFees() {
                                 </button>
                               )}
                               {/* Razorpay Pay Now / Try Again — shown only when toggle is ON and live keys are saved */}
-                              {razorpayActive && (() => {
+                              {razorpayActive && !isRefundedBalance(rec) && (() => {
                                 const hasFailed = (rec.failed_count ?? 0) > 0;
                                 const isProcessing = payingFeeId === rec.id;
                                 return (
@@ -2361,7 +2408,7 @@ export default function StudentFees() {
                                     href={`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`}
                                     onClick={(event) => {
                                       event.preventDefault();
-                                      openSessionDocument(`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`);
+                                      openSessionDocument(`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`, selectedSession?.id);
                                     }}
                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
                                     style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",

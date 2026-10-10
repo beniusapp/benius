@@ -100,6 +100,19 @@ export function calculateLateFee(
   return Math.max(0, Math.round(fee));
 }
 
+/** Shared read-only display value; leaves the stored invoice snapshot untouched. */
+export function studentFeeDisplayLateFee(
+  config: LateFeeConfig | null | undefined,
+  dueDate: string,
+  status: string,
+  storedLateFee: number,
+  referenceDate: Date = new Date(),
+): number {
+  return config?.enabled
+    ? calculateLateFee(config, dueDate, status, referenceDate)
+    : (Number(storedLateFee) || 0);
+}
+
 // ── Per-invoice details helper ────────────────────────────────────────────────
 
 export interface InvoiceCurrentDetails {

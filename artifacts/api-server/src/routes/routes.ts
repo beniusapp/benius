@@ -88,7 +88,7 @@ import {
   mapEnrollmentRollNumbers,
   selectAttendanceRoster,
 } from "../student-attendance-overview";
-import { calculateLateFee } from "../late-fee-engine";
+import { calculateLateFee, studentFeeDisplayLateFee } from "../late-fee-engine";
 import { buildLateFeeInfo } from "../late-fee-display";
 import { ledgerPaymentMethodLabel } from "../payment-method-label";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
@@ -5463,9 +5463,9 @@ export async function registerRoutes(
 
     const enriched = records.map(r => {
       const cfg = (r.lateFeeConfig as any) ?? ftToConfig.get(r.feeType.trim().toLowerCase());
-      const accrued_late_fee = cfg?.enabled
-        ? calculateLateFee(cfg, r.dueDate, r.status, now)
-        : ((r as any).lateFeeAmount ?? 0);
+      const accrued_late_fee = studentFeeDisplayLateFee(
+        cfg, r.dueDate, r.status, (r as any).lateFeeAmount ?? 0, now,
+      );
       const failedInfo = failedMap.get(r.id);
       const financial = financialByFeeId.get(r.id) ?? { paid: 0, refunded: 0 };
       const totalDue = r.amount + accrued_late_fee;
@@ -5517,18 +5517,7 @@ export async function registerRoutes(
     if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const today = new Date();
     const currentYYYYMM = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-    const viewSessionId: number | null = (req as any).viewSessionId
-      ?? (await storage.getActiveSession(student.schoolId))?.id
-      ?? null;
-    if (viewSessionId == null) {
-      return res.json({
-        previousArrears: 0,
-        currentMonthCharges: 0,
-        totalOutstanding: 0,
-        totalPaid: 0,
-        currentMonth: currentYYYYMM,
-      });
-    }
+    const viewSessionId = (req as any).viewSessionId as number;
 
     const sessionCond = sql`AND fr.session_id = ${viewSessionId}`;
 
@@ -5539,15 +5528,12 @@ export async function registerRoutes(
         fr.id,
         fr.amount,
         fr.late_fee_amount,
+        fr.late_fee_config,
+        fr.fee_type,
         fr.due_date,
         fr.status,
         COALESCE(p.total_paid, 0)::int AS amount_paid,
-        GREATEST(
-          fr.amount + fr.late_fee_amount
-            - COALESCE(p.total_paid, 0)
-            + COALESCE(rf.total_refunded, 0),
-          0
-        ) AS net_balance
+        COALESCE(rf.total_refunded, 0) AS total_refunded
       FROM fee_records fr
       LEFT JOIN (
         SELECT fee_record_id, SUM(amount)::int AS total_paid
@@ -5573,13 +5559,31 @@ export async function registerRoutes(
       ${sessionCond}
     `);
 
+    const structures = await storage.getFeeStructuresBySchool(student.schoolId);
+    const structureConfigs = new Map<string, any>();
+    for (const structure of structures) {
+      const key = structure.feeType.trim().toLowerCase();
+      if (!structureConfigs.has(key)) structureConfigs.set(key, (structure as any).lateFeeConfig ?? null);
+    }
+
     let previousArrears = 0;
     let currentMonthCharges = 0;
     let totalAmountPaid = 0;
 
     for (const r of rows.rows as any[]) {
       const dueMonth = String(r.due_date).slice(0, 7); // "YYYY-MM"
-      const net = Number(r.net_balance) || 0;
+      const config = r.late_fee_config ?? structureConfigs.get(String(r.fee_type).trim().toLowerCase());
+      const accruedLateFee = studentFeeDisplayLateFee(
+        config, String(r.due_date).slice(0, 10), r.status,
+        Number(r.late_fee_amount) || 0, today,
+      );
+      const net = Math.max(
+        0,
+        (Number(r.amount) || 0)
+          + accruedLateFee
+          - (Number(r.amount_paid) || 0)
+          + (Number(r.total_refunded) || 0),
+      );
       totalAmountPaid += Number(r.amount_paid) || 0;
       if (dueMonth < currentYYYYMM) {
         previousArrears += net;
@@ -5665,6 +5669,14 @@ export async function registerRoutes(
           sessionId: row.session_id == null ? null : Number(row.session_id),
         }),
       );
+      const currentLateFeeConfig = row.late_fee_config
+        ?? (await storage.getFeeStructuresBySchool(student.schoolId))
+          .find((structure: any) => structure.feeType.trim().toLowerCase() === String(row.fee_type).trim().toLowerCase())
+          ?.lateFeeConfig;
+      const currentLateFeeAmount = studentFeeDisplayLateFee(
+        currentLateFeeConfig, String(row.due_date).slice(0, 10), row.status,
+        Number(row.late_fee_amount ?? 0), new Date(),
+      );
 
       const relativeLogoUrl = row.school_logo_url as string | null;
       const logoUrl = relativeLogoUrl
@@ -5700,6 +5712,7 @@ export async function registerRoutes(
         feeType: row.fee_type,
         amount: Number(row.amount),
         lateFeeAmount: Number(row.late_fee_amount ?? 0),
+        currentLateFeeAmount,
         frequency: row.frequency ?? null,
         feePeriodStart: row.fee_period_start ?? null,
         feePeriodEnd: row.fee_period_end ?? null,
@@ -5707,7 +5720,7 @@ export async function registerRoutes(
         dueDate: row.due_date ?? null,
         notes: row.notes ?? null,
         breakdown: Array.isArray(row.breakdown_snapshot) ? row.breakdown_snapshot : [],
-        lateFeeConfig: row.late_fee_config ?? null,
+        lateFeeConfig: currentLateFeeConfig ?? null,
         student: {
           name: row.student_name,
           digitalStudentId: row.digital_student_id,
@@ -5715,6 +5728,7 @@ export async function registerRoutes(
           phone: row.student_phone ?? null,
           className: placementDisplay.className,
           section: placementDisplay.sectionName,
+          rollNumber: placementDisplay.rollNumber,
         },
         school: {
           name: row.school_name,

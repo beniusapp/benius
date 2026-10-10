@@ -62,6 +62,7 @@ import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
 import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import { renderInvoicePdf } from "./invoice-pdf";
 import { loadHistoricalFeePlacement } from "./fee-placement-storage";
+import { attachStatementSessionPlacement } from "./student-fee-statement";
 import {
   feePlacementForDisplay,
   paymentFeeSessionNotice,
@@ -6679,9 +6680,7 @@ export function registerFeesRoutes(app: Express) {
     if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
 
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionCond = viewSessionId != null
-      ? sql`AND COALESCE(fr.session_id, pa.session_id) = ${viewSessionId}`
-      : sql``;
+    const sessionCond = sql`AND COALESCE(fr.session_id, pa.session_id) = ${viewSessionId}`;
 
     try {
       const rows = await db.execute(sql`
@@ -6698,6 +6697,8 @@ export function registerFeesRoutes(app: Express) {
           fr.fee_type                                                      AS "feeType",
           COALESCE(fr.fee_name, fr.fee_type)                                AS "feeName",
           fr.invoice_number                                                AS "invoiceNumber",
+          fr.session_id                                                    AS "feeSessionId",
+          COALESCE(fr.session_id, pa.session_id)                           AS "sessionId",
 
           -- Amount: display rupees for existing logic; raw paise for breakdowns
           COALESCE(pa.amount_paise, fr.amount * 100) / 100                AS amount,
@@ -6779,6 +6780,7 @@ export function registerFeesRoutes(app: Express) {
 
         FROM payment_attempts pa
         LEFT JOIN fee_records fr     ON fr.id = pa.fee_record_id
+                                     AND fr.school_id = pa.school_id
         -- Pull receipt_number from payment_records as a fallback for migrated rows
         LEFT JOIN payment_records pr ON  pr.school_id          = pa.school_id
                                      AND pr.fee_record_id      = pa.fee_record_id
@@ -6796,7 +6798,19 @@ export function registerFeesRoutes(app: Express) {
         LIMIT 400
       `);
 
-      res.json(rows.rows);
+      const selectedSession = await storage.getAcademicSessionById(viewSessionId!);
+      const placement = await loadHistoricalFeePlacement({
+        schoolId: student.schoolId,
+        studentId: student.id,
+        sessionId: viewSessionId,
+      });
+      const displayPlacement = feePlacementForDisplay(placement);
+      res.json(attachStatementSessionPlacement(
+        rows.rows as any[],
+        viewSessionId!,
+        String((selectedSession as any)?.academicYear ?? (selectedSession as any)?.name ?? `Session ${viewSessionId}`),
+        placement,
+      ));
     } catch (err: any) {
       console.error("[/api/student/fees/payment-attempts]", err);
       res.status(500).json({ message: "Failed to load payment history" });
@@ -6828,7 +6842,6 @@ export function registerFeesRoutes(app: Express) {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
-    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const settings = await storage.getExternalPaymentSettings(student.schoolId);
     // Resolve credentials with env-var fallback so the Pay Now button appears
     // even when only process.env.RAZORPAY_* vars are set (no DB config saved yet).

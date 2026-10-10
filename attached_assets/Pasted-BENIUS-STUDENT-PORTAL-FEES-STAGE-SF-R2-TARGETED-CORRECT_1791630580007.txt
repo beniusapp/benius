@@ -1,0 +1,80 @@
+BENIUS — STUDENT PORTAL → FEES
+
+STAGE SF-R2: TARGETED CORRECTIONS
+
+The read-only discovery and correction plan are complete.
+
+Implement the five confirmed improvements below in one focused pass.
+
+1. ACADEMIC SESSION ISOLATION
+
+- Require a valid, school-authorized selected Academic Session for all session-owned Student Fees reads.
+- Never allow a missing or malformed session header to return records across sessions.
+- Scope invoice, receipt, payment-attempt and reminder-history reads to the authenticated School ID, Student ID and selected Academic Session ID.
+- Preserve archived-session read access and existing payment restrictions.
+- Ensure frontend query keys, API headers and document links use the same selected session.
+- Prevent stale responses from a previous session appearing after switching.
+
+2. REFUNDED PAID INVOICES
+
+- Show Paid invoices with a positive processed-refund-adjusted outstanding balance in the Outstanding tab.
+- Clearly label the remaining amount.
+- Preserve stored Paid status and existing payment/refund history.
+- Do not automatically enable Pay Now for these invoices.
+- Do not modify financial formulas or records.
+
+3. LATE-FEE CONSISTENCY
+
+- Align the fee-card, summary and invoice late-fee presentation using the existing authoritative accrued late-fee calculation.
+- Preserve existing late-fee policy and financial formulas.
+- Do not rewrite stored late fees, invoices or transactions.
+- If a historical invoice must preserve a stored snapshot, do not silently replace it with a newly calculated amount; clearly distinguish historical and current amounts instead.
+
+4. HISTORICAL ENROLLMENT IN DOCUMENTS
+
+- Ensure invoice and receipt documents use the enrollment belonging to the invoice's Academic Session.
+- Include historical Class, Section and Roll Number in invoice HTML.
+- Preserve existing receipt behavior.
+- Do not substitute current enrollment when historical enrollment is unavailable.
+- Preserve school/student/session authorization.
+
+5. PAYMENT-ATTEMPT STATEMENT PDF
+
+- Include Academic Session and historical Class, Section and Roll Number where available.
+- Resolve placement from the selected session's enrollment, not current Registry placement.
+- Ensure the statement contains only the selected student's session-specific payment attempts.
+- Preserve transaction references, payment amounts and IST formatting.
+- Display unavailable historical placement honestly rather than guessing.
+
+TESTS
+
+Add focused, side-effect-free regression tests covering:
+- Session switching, missing/invalid headers and cross-school/student denial.
+- Archived-session reads and payment restrictions.
+- Refunded Paid invoices with positive outstanding balances.
+- Late-fee consistency.
+- Historical enrollment in invoice, receipt and PDF.
+- Correct PDF contents after session switching.
+
+STRICT RULES
+
+- Development source changes only.
+- Do not modify existing database records or schema.
+- Do not change payment/refund processing or financial formulas.
+- Do not create invoices, payments or refunds.
+- Do not call external payment providers.
+- Do not restart services, deploy or publish.
+- Do not modify Student Portal Profile.
+- Do not touch Principal Portal, Financial Analytics, Ledger, Fee Structures or Reminders.
+- Do not work on Mobile.
+
+Run focused mocked tests and available builds.
+
+REPORT:
+A. Files changed.
+B. Fixes completed.
+C. Test results.
+D. Build results.
+E. Remaining blockers or decisions.
+
+Do not perform another broad audit.
