@@ -1,0 +1,72 @@
+BENIUS — TEACHER PORTAL → ATTENDANCE → MY ATTENDANCE
+
+STAGE TA-2: AFTER-SCHOOL LEAVE BUTTON CORRECTION
+
+The read-only investigation is complete.
+
+Implement ONE focused correction.
+
+CURRENT PROBLEM:
+
+After school hours, the My Attendance page displays "Record as Leave".
+
+Clicking this button invokes POST /api/teacher/self-attendance/check-in and directly records the teacher's attendance as Leave.
+
+REQUIRED BEHAVIOR:
+
+1. Change the after-school button label to "Apply for Leave".
+
+2. Clicking it must ONLY navigate to the existing Teacher Leave Application page:
+
+/teacher-dashboard/leave
+
+3. The button must NOT:
+   - Call checkInMut.mutate().
+   - Call any attendance mutation API.
+   - Insert or update Teacher Self-Attendance.
+   - Create a leave request automatically.
+   - Approve or reject leave.
+   - Change any attendance status.
+
+4. Replace the misleading warning with:
+
+"School hours have ended. To request leave, please submit a Leave Application. Leave is subject to approval."
+
+5. Preserve the existing normal check-in and checkout behavior during permitted hours.
+
+6. Preserve existing leave-application submission and approval workflows.
+
+7. Do not change Present, Late, Half Day, Absent or Leave calculation formulas.
+
+8. Do not modify attendance percentages, KPIs, historical attendance or attendance policies.
+
+9. Preserve authenticated Teacher ID, School ID and Academic Session isolation.
+
+TESTING:
+
+Add focused tests proving:
+- After-school button navigates to /teacher-dashboard/leave.
+- Clicking it does not call check-in or any attendance mutation.
+- Existing permitted-hours check-in remains unchanged.
+- Archived-session write restrictions remain unchanged.
+
+STRICT RULES:
+
+- Development source changes only.
+- No database or schema changes.
+- Do not create or modify attendance records.
+- Do not create or approve leave applications.
+- Do not restart workflows.
+- Do not deploy or publish.
+- Do not work on Mobile.
+- Do not perform unrelated audits.
+
+REPORT:
+
+A. Files changed.
+B. Navigation correction completed.
+C. Test results.
+D. Build results.
+E. Any remaining issues.
+
+Stop after reporting.

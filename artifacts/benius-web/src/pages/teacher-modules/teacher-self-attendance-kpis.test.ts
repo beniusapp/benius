@@ -114,3 +114,28 @@ test("the session-synced controls remain read-only in archived Sessions", () => 
   assert.match(attendance, /disabled=\{checkOutMut\.isPending \|\| isArchiveMode\}/);
   assert.match(attendance, /View Only/);
 });
+
+test("after-school CTA navigates to Leave without invoking attendance mutations", () => {
+  const attendance = readFileSync(
+    "artifacts/benius-web/src/pages/teacher-modules/my-attendance.tsx",
+    "utf8",
+  );
+  const buttonByTestId = (testId: string) => {
+    const marker = `data-testid="${testId}"`;
+    const markerIndex = attendance.indexOf(marker);
+    if (markerIndex < 0) return null;
+    const start = attendance.lastIndexOf("<button", markerIndex);
+    const end = attendance.indexOf("</button>", markerIndex);
+    return start >= 0 && end >= 0 ? attendance.slice(start, end + "</button>".length) : null;
+  };
+  const applyButton = buttonByTestId("button-apply-leave");
+  const checkInButton = buttonByTestId("button-check-in");
+
+  assert.ok(applyButton, "the after-school Apply for Leave button is rendered");
+  assert.match(applyButton, /setLocation\("\/teacher-dashboard\/leave"\)/);
+  assert.match(applyButton, /Apply for Leave/);
+  assert.doesNotMatch(applyButton, /checkInMut\.mutate|sessionMutation|\/api\/teacher\/self-attendance/);
+  assert.ok(checkInButton, "the normal-hours Check In button remains rendered");
+  assert.match(checkInButton, /checkInMut\.mutate\(\)/);
+  assert.match(attendance, /School hours have ended\. To request leave, please submit a Leave Application\. Leave is subject to approval\./);
+});

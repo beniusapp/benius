@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -94,6 +95,7 @@ function getDayLabel(dateStr: string): string {
 
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const archiveModeContext = useArchiveMode();
   const currentSession = useTeacherSelectedSession();
   const isArchiveMode = currentSession ? !currentSession.isActive : archiveModeContext;
@@ -466,7 +468,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-left mb-2">
                 <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-red-300">
-                  School day ended at <strong>{policy?.schoolEndTime}</strong>. Checking in now will record your attendance as <strong>Leave</strong>.
+                  School hours have ended. To request leave, please submit a Leave Application. Leave is subject to approval.
                 </p>
               </div>
             )}
@@ -477,20 +479,27 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                 <p className="text-sm text-white/30">Viewing archive — check-in unavailable</p>
               </div>
             ) : (
-              <button
-                onClick={() => checkInMut.mutate()}
-                disabled={checkInMut.isPending}
-                className={`relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${
-                  isSchoolOver
-                    ? "bg-slate-600 hover:bg-slate-500 text-white"
-                    : "bg-emerald-500 hover:bg-emerald-400 text-white"
-                }`}
-                data-testid="button-check-in"
-              >
-                {!isSchoolOver && <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />}
-                {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                {isSchoolOver ? "Record as Leave" : "Check In"}
-              </button>
+              isSchoolOver ? (
+                <button
+                  onClick={() => setLocation("/teacher-dashboard/leave")}
+                  className="relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 bg-slate-600 hover:bg-slate-500 text-white"
+                  data-testid="button-apply-leave"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Apply for Leave
+                </button>
+              ) : (
+                <button
+                  onClick={() => checkInMut.mutate()}
+                  disabled={checkInMut.isPending}
+                  className="relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 bg-emerald-500 hover:bg-emerald-400 text-white"
+                  data-testid="button-check-in"
+                >
+                  <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />
+                  {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                  Check In
+                </button>
+              )
             )}
           </div>
         ) : shiftState === "leave" ? (
