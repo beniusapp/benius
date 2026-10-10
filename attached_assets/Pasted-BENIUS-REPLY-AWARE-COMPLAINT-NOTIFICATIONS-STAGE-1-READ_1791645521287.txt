@@ -1,0 +1,144 @@
+BENIUS — REPLY-AWARE COMPLAINT NOTIFICATIONS
+STAGE 1: READ-ONLY TECHNICAL IMPACT ASSESSMENT
+
+IMPORTANT: DO NOT IMPLEMENT ANYTHING YET.
+
+PRODUCT DECISION — CONFIRMED
+
+Student Dashboard → Complaints red dot must follow unread Teacher-to-Student complaints, including new Teacher/Admin replies to previously read complaints.
+
+EXPECTED BEHAVIOR
+
+1. Teacher sends a new complaint → Student Dashboard Complaints red dot appears.
+2. Student opens that complaint successfully → it becomes read.
+3. When no unread complaints remain → red dot disappears.
+4. Teacher/Admin adds a new qualifying reply to the same complaint → it becomes unread again and the dashboard red dot reappears.
+5. Student opens the updated complaint → it becomes read again.
+6. Multiple unread complaints keep the dot visible until all have been read.
+7. Resolved complaints remain visible in history; unread qualifying activity on them should still be represented if such activity is permitted.
+8. Read state persists across refreshes, logins and devices.
+
+PART A — CURRENT DATABASE AND DATA MODEL
+
+Inspect the existing:
+- student_complaint_read_receipts table and migration 019.
+- Complaint records and complaint notes/replies schema.
+- Read-receipt API and storage helpers.
+- Unread-count calculation.
+
+Determine:
+
+1. Can the current read_at column safely support reply-aware tracking?
+2. Is a last-read timestamp comparison sufficient, or is a stable note/activity cursor needed?
+3. Are complaint and reply timestamps reliable, immutable and precise enough for ordering?
+4. How are timestamp ties, backdated notes and concurrent replies handled?
+5. Can this work without modifying existing complaint records?
+6. Is a new additive migration necessary? If so, specify the proposed columns, indexes and constraints without executing SQL.
+
+PART B — NOTIFICATION SEMANTICS
+
+Analyze these cases:
+
+- New unread Teacher complaint.
+- Previously read complaint receives a new Teacher reply.
+- Previously read complaint receives a new Admin reply.
+- Student's own reply.
+- Complaint status changes without a new reply.
+- Resolved complaint with a new qualifying reply.
+- Deleted or hidden complaint.
+- Multiple replies arriving close together.
+- Student opening a complaint while a new reply arrives concurrently.
+- Older Academic Session selected.
+- Student switching Academic Sessions.
+- Logout/login and another device.
+
+Confirm which author roles and reply types should count, based on existing authorized inbox visibility.
+
+Do not assume every Admin note is visible to the Student.
+
+PART C — BACKEND IMPACT
+
+Identify the smallest changes needed to:
+
+1. Determine each complaint's latest qualifying unread activity.
+2. Compare that activity against the Student's persisted read position.
+3. Return an authenticated, scoped unread count to the Dashboard.
+4. Mark a complaint read only after successful authorized opening.
+5. Avoid accidentally marking a newly arriving concurrent reply as read.
+6. Prevent cross-school, cross-student or cross-session access.
+7. Preserve existing idempotency and avoid duplicate receipts.
+
+Inspect the existing feature flags and compatibility with current receipt endpoints.
+
+PART D — FRONTEND IMPACT
+
+Determine how to:
+
+1. Show the Complaints dashboard red dot whenever unread count is greater than zero.
+2. Keep the dot visible when the module opens but unread complaints remain.
+3. Clear it only when the relevant complaints have been read.
+4. Re-show it when a qualifying new reply arrives.
+5. Refresh/invalidate the count after successful mark-read.
+6. Handle loading, errors and disabled feature states without falsely showing zero unread.
+7. Preserve the existing module-level seen cursor for compatibility.
+8. Keep Homework, Classwork and Noticeboard unchanged.
+
+PART E — MIGRATION AND COMPATIBILITY
+
+If a database migration is required:
+
+- Propose the smallest additive migration.
+- Explain how existing read receipts will be interpreted.
+- Identify whether historical notes can be distinguished from new replies.
+- Explain how to avoid incorrectly making all previously read complaints unread.
+- State whether any backfill is needed and its risks.
+- Explain how the feature remains disabled safely until the migration is approved and applied.
+
+Do not create or execute the migration yet.
+
+PART F — TEST PLAN
+
+Propose focused tests for:
+- New complaint unread.
+- Opening clears unread.
+- New Teacher/Admin reply makes it unread again.
+- Student's own reply does not.
+- Multiple unread complaints.
+- Resolved complaints.
+- Concurrent read/reply races.
+- Timestamp ties and cursor ordering.
+- Session, School and Student isolation.
+- Persistence across logins/devices.
+- API failure and feature-disabled fallback.
+- No regression to other dashboard module dots.
+
+FINAL REPORT
+
+Provide:
+
+1. Current limitation.
+2. Recommended reply-aware data model.
+3. Migration required: YES/NO.
+4. Exact files/functions likely to change.
+5. Risks and legacy-data considerations.
+6. Smallest safe implementation sequence.
+7. Any remaining product decisions.
+
+STRICT SAFETY RULES
+
+- READ-ONLY AUDIT ONLY.
+- No code or test modifications.
+- No SQL execution or migrations.
+- No database writes or backfills.
+- No feature-flag changes.
+- No restarts or deployments.
+- Never touch Production.
+- Preserve all existing complaint records.
+- Preserve strict School, Student and Academic Session isolation.
+- Preserve existing module seen cursors.
+- Do not modify Homework, Classwork or Noticeboard.
+- No Mobile work.
+
+Wait for explicit approval before any implementation.
+
+Keep the report concise and evidence-based.
