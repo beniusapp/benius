@@ -1,0 +1,360 @@
+# BENIUS — STAGE FA-R5
+## FINAL FINANCIAL ANALYTICS & ACADEMIC SESSION VERIFICATION
+### PRINCIPAL PORTAL → FEES & PAYMENTS → FINANCIAL ANALYTICS
+
+**MODE: STRICTLY READ-ONLY — NO CODE OR DATABASE CHANGES**
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner requests a final, thorough verification of the Principal Portal Financial Analytics module following the FA-R4 reporting corrections.
+
+The most important requirements are:
+
+1. Every financial calculation must follow the existing BENIUS financial business rules.
+2. Every financial record must belong to the authenticated school.
+3. Every financial calculation must be scoped to the selected Academic Session ID.
+4. Both Active and Archived Academic Sessions must work correctly.
+5. Switching Academic Sessions must update the entire dashboard consistently.
+6. Financial Analytics PDFs must represent the selected Academic Session.
+7. No financial business logic, formula, database record, or application behavior may be changed during this audit.
+
+## PHASE 1 — VERIFY FA-R4 CORRECTIONS
+
+Inspect the actual current source code, not only the previous audit reports.
+
+Verify:
+
+- Financial Analytics Outstanding includes processed refunds according to the established refund-service calculation.
+- Pending, failed, or unprocessed refunds do not affect outstanding.
+- Receivables Aging summary and drill-down use consistent refund treatment.
+- Class Performance uses exact historical Academic Session enrollment.
+- Missing or ambiguous historical enrollment does not fall back to current Student Registry class.
+- Analytics API requests use their captured Academic Session ID.
+- Aging detail requests use their captured Academic Session ID.
+- Financial Analytics PDF downloads are protected against session changes during generation.
+- Existing no-refund financial results remain unchanged.
+
+If any correction is incomplete, report it. Do not modify it.
+
+## PHASE 2 — VERIFY EVERY FINANCIAL ANALYTICS METRIC
+
+Independently trace and verify:
+
+1. Due This Period.
+2. Gross Collected.
+3. Net Collected.
+4. Outstanding.
+5. Collection Efficiency.
+6. Online Collection.
+7. Offline Collection.
+8. Overdue Amount.
+
+For each metric identify:
+
+- Exact calculation formula.
+- Source tables and columns.
+- Payment/invoice/refund status rules.
+- Date filtering.
+- Authenticated school ID enforcement.
+- Selected Academic Session ID enforcement.
+- Rounding and currency handling.
+- Zero-data behavior.
+- Relevant existing tests.
+- Whether the result matches the established business definition.
+
+Do not assume that a formula is correct simply because the application builds.
+
+Do not change Gross Collected, Net Collected, Collection Efficiency, or any other formula.
+
+Flag any unresolved business definition for owner review.
+
+## PHASE 3 — ACADEMIC SESSION ISOLATION (MANDATORY)
+
+This is a critical verification requirement.
+
+Test the following scenarios:
+
+| Scenario | Required result |
+|---|---|
+| Active → Archived | Entire dashboard reflects archived session |
+| Archived → Active | Entire dashboard reflects active session |
+| Archived A → Archived B | No data from the previous archived session |
+| Rapid switching | No stale or incorrectly associated responses |
+| Refresh after switching | Selected session remains authoritative |
+| Navigate away and return | Correct session analytics displayed |
+| Switch while API loading | Previous request cannot contaminate current session |
+| Switch while PDF generating | Previous-session PDF is not delivered as current-session output |
+| Switch while aging drawer is open | Drawer reflects the selected session or safely resets |
+
+Verify that the Academic Session ID is correctly applied to:
+
+- Invoice queries.
+- Payment queries.
+- Refund queries.
+- Outstanding calculations.
+- Aging calculations.
+- Class Performance.
+- Fee Categories.
+- Payment Channels.
+- Collection Trends.
+- Cash Denomination Coverage.
+- All Financial Analytics PDFs.
+- All drill-down queries.
+
+Every query must use both:
+
+**Authenticated School ID + Selected Academic Session ID.**
+
+Verify that payment/refund records are attributed to the correct invoice Academic Session according to the existing contract.
+
+Do not assume that calendar year equals Academic Session.
+
+Do not allow current-session student placement to overwrite historical reporting placement.
+
+## PHASE 4 — ARCHIVED SESSION FINANCIAL ACCURACY
+
+Verify that Archived Academic Sessions:
+
+- Remain readable.
+- Do not permit financial writes through analytics.
+- Show the correct historical invoices.
+- Show payments associated with that Academic Session.
+- Handle processed refunds under the existing read-only reporting rule.
+- Preserve stored invoice statuses.
+- Show historical Class Performance correctly.
+- Preserve historical fee categories.
+- Do not use current Academic Session financial records.
+- Display correct date ranges and session labels.
+- Generate the correct session-specific PDFs.
+
+Specifically inspect cases where:
+
+1. A student was promoted into a new Academic Session.
+2. An invoice belongs to an archived session but the student is now in a different class.
+3. A payment was recorded after the original Academic Session ended.
+4. A processed refund was recorded after archival.
+5. An archived invoice has a stored Paid status but a refund-adjusted outstanding balance.
+6. A session has no invoices or payments.
+7. A historical enrollment is missing or ambiguous.
+
+Identify whether each report uses stored invoice status or calculated financial balance, and flag inconsistencies.
+
+**Do not modify archived financial records or invoice statuses.**
+
+## PHASE 5 — FILTER AND DATE VERIFICATION
+
+Check:
+
+- Today.
+- This Week.
+- This Month.
+- Academic Year.
+- Custom date range.
+- Invalid custom dates.
+- Session start and end boundaries.
+- IST (Asia/Kolkata) timezone.
+- Payments received after session end.
+- Refunds processed after session end.
+- Due-date filtering versus received-date filtering.
+- Date filters during Academic Session switching.
+- Empty results.
+- Error and retry behavior.
+
+Verify that date filtering cannot introduce another Academic Session's financial data.
+
+Do not silently change the existing date-filter definitions.
+
+## PHASE 6 — CHARTS AND BREAKDOWNS
+
+Verify every chart and breakdown, including:
+
+- Collection Trend.
+- Payment Channels.
+- Payment Channel Split.
+- Class Performance.
+- Fee Categories.
+- Receivables Aging.
+- Cash Denomination Coverage.
+- All additional Financial Analytics sections found in the current UI.
+
+For each, verify:
+
+- Source calculation.
+- Correct school.
+- Correct Academic Session.
+- Correct date range.
+- Correct financial amount.
+- Correct category/class attribution.
+- Correct empty/loading/error states.
+- Consistency with summary cards where the underlying definitions are comparable.
+
+Do not force equality between metrics that intentionally use different date bases or financial populations.
+
+## PHASE 7 — FINANCIAL ANALYTICS PDF VERIFICATION
+
+Inspect all available Financial Analytics PDF sections and export options.
+
+Verify:
+
+- Correct school name.
+- Correct selected Academic Session.
+- Correct reporting period.
+- Correct summary figures.
+- Correct class breakdown.
+- Correct fee-category breakdown.
+- Correct payment-channel breakdown.
+- Correct aging figures.
+- Correct cash-denomination figures.
+- Correct IST date/time presentation.
+- No stale-session PDF after switching.
+
+Where the PDF uses the same data object as the dashboard, label this SOURCE VERIFIED rather than claiming independent reconciliation.
+
+Do not modify PDF rendering or financial calculations.
+
+## PHASE 8 — FINANCIAL RECONCILIATION
+
+Use existing safe tests or synthetic in-memory examples to compare Financial Analytics calculations with:
+
+- Invoice amounts.
+- Successful payment records.
+- Processed refund records.
+- Existing Ledger & Transactions detail calculations.
+- Existing fee balance calculations.
+
+Verify normal scenarios and edge cases:
+
+- No payments.
+- Full payments.
+- Partial payments.
+- Multiple payments.
+- Processed partial refunds.
+- Processed full refunds.
+- Pending/failed refunds.
+- Multiple processed refunds.
+- Overdue invoices.
+- Late fees.
+- Archived-session invoices.
+- Promoted students.
+- Zero-value reports.
+- Large amounts and rounding boundaries.
+
+Clearly distinguish between source-code agreement and independent database reconciliation.
+
+Do not create or access any real financial database.
+
+Do not initiate live payment/refund operations.
+
+## PHASE 9 — SECURITY AND READ-ONLY SAFETY
+
+Verify:
+
+- Authenticated school isolation.
+- Selected Academic Session isolation.
+- Principal/Support Staff permission boundaries.
+- Student data cannot leak into Principal analytics from another school.
+- Archived-session analytics remain read-only.
+- PDF exports do not modify financial records.
+- No cross-session query contamination.
+- No unauthorized financial endpoints.
+
+## PHASE 10 — VERIFICATION EVIDENCE
+
+Use only safe, existing test infrastructure.
+
+You may run existing focused tests or safe in-memory/mock tests without modifying application source.
+
+Do not introduce new database infrastructure.
+
+Do not reopen previous database investigations.
+
+Do not change test expectations.
+
+Report each verification using one of:
+
+- SOURCE VERIFIED.
+- UNIT TEST PASSED.
+- MOCKED ROUTE TEST PASSED.
+- DATABASE VERIFIED.
+- SIGNED-IN UI VERIFIED.
+- NOT VERIFIED.
+
+Do not report signed-in UI or database verification unless it actually occurred.
+
+If the necessary signed-in session or safe test environment is unavailable, clearly report NOT VERIFIED and continue with available read-only verification.
+
+## PHASE 11 — REQUIRED FINAL REPORT
+
+Provide the following:
+
+### A. Overall result
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Financial Analytics metric verification
+
+| Metric | Existing formula | School scope | Session scope | Test evidence | Result |
+
+### C. Academic Session verification
+
+| Scenario | Active | Archived | Evidence | Result |
+
+### D. Historical Class Performance verification
+
+Confirm exact-session enrollment behavior.
+
+### E. Refund-aware outstanding verification
+
+Confirm processed-only refund treatment and reconciliation with aging.
+
+### F. Charts and filters verification
+
+Report each chart and filter separately.
+
+### G. PDF verification
+
+Report session-specific PDF correctness.
+
+### H. Security verification
+
+Report school isolation, session isolation, and archived read-only behavior.
+
+### I. Remaining issues
+
+For each unresolved issue provide:
+
+- Severity.
+- Exact file and line numbers.
+- Financial impact.
+- Whether it is a confirmed defect or an unverified risk.
+- Smallest proposed correction.
+- Whether owner approval is required.
+
+### J. Final safety confirmation
+
+Confirm:
+
+- Application source changed: NO.
+- Financial formulas changed: NO.
+- Database records modified: NO.
+- Development/Production financial data accessed: NO.
+- Payment/refund operations executed: NO.
+- Migrations performed: NO.
+- Deployment performed: NO.
+- Workflows restarted: NO.
+
+## PHASE 12 — MANDATORY STOP
+
+After submitting the verification report, STOP.
+
+Do not implement any fixes.
+
+Do not change Financial Analytics formulas.
+
+Do not change payment/refund processing.
+
+Do not change Academic Session behavior.
+
+Do not modify Student Fees or Ledger.
+
+Wait for explicit owner approval.
