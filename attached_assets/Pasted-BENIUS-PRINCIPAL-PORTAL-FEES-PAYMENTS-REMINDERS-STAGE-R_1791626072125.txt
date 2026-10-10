@@ -1,0 +1,61 @@
+BENIUS — PRINCIPAL PORTAL → FEES & PAYMENTS → REMINDERS
+
+STAGE REM-R1: TARGETED READ-ONLY FUNCTIONAL AUDIT
+
+We have completed the Fee Structures invoice-linkage verification in Development. We are now moving to the Reminders module.
+
+TASK:
+
+Inspect the existing Principal Portal → Fees & Payments → Reminders module end to end.
+
+1. Identify the frontend components, backend routes, services, database tables, and scheduled jobs used by Reminders.
+
+2. Explain the existing functionality in simple language:
+   - What types of fee reminders are supported?
+   - How are students and invoices selected?
+   - How are reminders created, scheduled, sent, and tracked?
+   - Which delivery channels are actually implemented (such as SMS, email, WhatsApp, or in-app)?
+   - What does the Principal see in the Reminders interface?
+
+3. Verify these critical requirements:
+   - Strict school/tenant isolation.
+   - Correct Academic Session filtering for invoices and recipients.
+   - No reminders sent for settled or fully paid invoices.
+   - Correct outstanding amounts, including relevant payment/refund handling.
+   - IST (Asia/Kolkata) for business dates and displayed times.
+   - Duplicate-send prevention.
+   - Authorization for Principal/Admin operations.
+   - Safe failure handling and accurate delivery status reporting.
+
+4. Distinguish between:
+   - Fully implemented functionality.
+   - Partially implemented functionality.
+   - UI-only or placeholder functionality.
+   - Confirmed bugs or security risks.
+
+5. Check existing tests and report their results if they can be run safely without sending messages or changing data.
+
+STRICT RULES:
+
+- READ-ONLY. Do not modify code, database, or configuration.
+- Do not send any real SMS, email, WhatsApp, or notifications.
+- Do not create reminders or change reminder statuses.
+- Do not trigger scheduled jobs.
+- Do not deploy, publish, or restart services.
+- Do not modify Fee Structures, Ledger, Financial Analytics, payments, refunds, or invoice-generation logic.
+- Do not work on Mobile.
+- Do not perform unrelated audits.
+
+OUTPUT FORMAT:
+
+A. Current Reminders functionality — simple explanation.
+B. Frontend/backend/database architecture — relevant files and functions.
+C. What works.
+D. Confirmed issues, prioritized Critical / High / Medium / Low, with file and line evidence.
+E. Missing or placeholder features.
+F. Existing test coverage.
+G. Minimum necessary fixes to complete Reminders.
+
+Do not implement anything yet. Do not speculate about bugs without evidence.
+
+Keep the report concise and actionable. We want to finish this module, not enter an endless audit cycle.
