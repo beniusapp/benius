@@ -1,0 +1,72 @@
+BENIUS — EXAMINATION GRACE MARKS IMPACT ANALYSIS
+
+MODE: STRICTLY READ-ONLY. DO NOT MODIFY ANYTHING.
+
+I am considering completely removing the GRACE / GRACE MARKS functionality from the Examination module.
+
+Before making this decision, inspect the actual BENIUS codebase and explain whether Grace Marks are necessary and what would happen if we removed them.
+
+INVESTIGATE:
+
+1. Where is Grace Marks currently implemented?
+   - Principal/Admin Examination screens
+   - Teacher Examination screens
+   - Student Examination screens
+   - Backend APIs
+   - Database schema
+   - Shared calculation functions
+
+2. Does Grace Marks affect:
+   - Student examination scores?
+   - Total marks and percentages?
+   - Grades and GPA?
+   - Pass/fail decisions?
+   - Promotion and detention?
+   - Report cards and marksheets?
+   - Published examination results?
+   - Historical academic sessions?
+
+3. Is Grace Marks actually used in any current calculation, or is it merely an unused configuration/UI option?
+
+4. Does any existing database record contain Grace Marks or a Grace-related override? Use only safe, read-only inspection if the Development database can be positively verified. Do not query Production.
+
+5. If Grace Marks were removed completely:
+   - What functionality would break?
+   - Which calculations would change?
+   - Would historical results change?
+   - Would existing data become incompatible?
+   - Which modules depend on it?
+
+6. Can BENIUS operate correctly without Grace Marks?
+
+7. Recommend the safest approach:
+   A. Remove Grace Marks completely.
+   B. Remove it from the UI but retain historical/backend compatibility.
+   C. Keep it because it is essential.
+
+IMPORTANT ARCHITECTURAL RULES:
+- Preserve school/tenant isolation.
+- Preserve strict Academic Session ID isolation throughout Admin Exam Controller.
+- Preserve historical results and published records.
+- Do not silently recalculate marks, results or promotions.
+
+STRICT RESTRICTIONS:
+- NO code changes.
+- NO database modifications.
+- NO migrations or SQL writes.
+- NO feature flag changes.
+- NO deployment or restart.
+- NO Production or Mobile changes.
+
+FINAL REPORT — SIMPLE LANGUAGE:
+
+1. Where Grace Marks are used.
+2. Whether Grace Marks affect actual examination calculations.
+3. Whether Grace Marks are necessary.
+4. Risks of removing them.
+5. Safest recommendation.
+6. Files/modules that would require changes.
+
+Give a clear conclusion: SAFE TO REMOVE / REMOVE WITH PRECAUTIONS / NOT SAFE TO REMOVE.
+
+STOP and wait for my decision. Do not implement anything.
