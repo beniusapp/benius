@@ -1,0 +1,83 @@
+# BENIUS — STAGE 1C-1V-B4-BV-R1
+## Disposable PostgreSQL Guard Investigation — READ ONLY
+
+The previous B4-BV verification was BLOCKED because the disposable PostgreSQL cluster passed identity checks but failed the zero-application-table safety condition.
+
+The owner authorizes a narrow, read-only investigation only.
+
+**DO NOT MODIFY APPLICATION CODE, DATABASE SCHEMA, RECORDS, OR FINANCIAL BUSINESS LOGIC.**
+
+### 1. Revalidate identity
+
+Verify the existing disposable PostgreSQL cluster against the approved B1 identity:
+
+- Database: `benius_fees_1c1v_b1`
+- Role: `benius_fees_1c1v_b1_role`
+- Port: `55432`
+- PostgreSQL system identifier: `7694745870763171778`
+- Approved private Unix socket and data directory
+- Socket-only connectivity
+
+If any identity condition fails, STOP immediately.
+
+Do not recreate, substitute, reset, or migrate the database.
+
+### 2. Investigate the guard
+
+Read the existing B1 guard implementation.
+
+Identify:
+
+- The exact SQL used for the application-table-count check.
+- Whether the guard expects a completely fresh database.
+- Whether the existing B2 synthetic verification could have left application tables behind.
+- Whether the guard has an approved safe mechanism for validating an initialized disposable database.
+
+Do not modify or bypass the guard.
+
+### 3. Read-only database catalog inspection
+
+Only after identity validation succeeds:
+
+- Count application tables.
+- List their schema-qualified names.
+- Identify whether they are ordinary tables, partitions, or other relation types.
+- Check whether their names match the expected synthetic BENIUS test schema.
+- Inspect only metadata necessary to explain the guard failure.
+
+Do not query financial rows, student records, or other application data.
+
+Do not run DELETE, DROP, TRUNCATE, ALTER, migrations, schema pushes, fixture insertion, or cleanup.
+
+Do not connect to Development or Production.
+
+### 4. Required report
+
+Provide:
+
+1. Overall result: EXPLAINED / UNEXPLAINED / BLOCKED.
+2. Verified cluster identity.
+3. Exact table count.
+4. Schema-qualified table names.
+5. Exact guard condition that failed.
+6. Whether the tables are consistent with prior B2 synthetic test setup.
+7. Whether that origin is proven or only inferred.
+8. Whether the current guard can safely support this initialized database.
+9. Safest proposed verification approach.
+10. Whether any code or data was modified.
+11. Whether Development or Production was accessed.
+12. Any remaining risks.
+
+### 5. Mandatory stop
+
+After reporting, STOP.
+
+Do not change the guard.
+
+Do not clear the database.
+
+Do not rerun B4-BV route tests.
+
+Do not begin B4-C.
+
+Wait for owner review and explicit approval.
