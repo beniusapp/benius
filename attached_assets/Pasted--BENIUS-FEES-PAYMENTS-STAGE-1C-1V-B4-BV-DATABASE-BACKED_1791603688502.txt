@@ -1,0 +1,172 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B4-BV — DATABASE-BACKED SELECTION VERIFICATION
+### OWNER APPROVED — VERIFICATION ONLY
+
+BENIUS is a multi-tenant School Management Information System in DEVELOPMENT.
+
+Stage B4-B implemented Ledger PDF selection validation and Web session-switch protection.
+
+The owner now authorizes verification of those existing changes using only the previously established disposable PostgreSQL test environment.
+
+**DO NOT MODIFY APPLICATION SOURCE CODE OR EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+### 1. Environment safety
+
+Before testing, revalidate the existing disposable PostgreSQL cluster:
+
+- Database: `benius_fees_1c1v_b1`
+- Role: `benius_fees_1c1v_b1_role`
+- Port: `55432`
+- Cluster system identifier: `7694745870763171778`
+- Private Unix socket and data directory established in B1.
+- Existing fail-closed connection guard.
+
+Confirm all identities match.
+
+Do not recreate or substitute the cluster if anything is missing.
+
+Do not connect to Development or Production databases.
+
+Do not use the application's default DATABASE_URL.
+
+Only the positively identified disposable database may be started for verification.
+
+### 2. Database-backed tests
+
+Using synthetic schools, Academic Sessions, Students, enrollments and fee records, execute the actual Ledger PDF POST route.
+
+Verify:
+
+1. One valid selected invoice generates a PDF containing exactly that invoice.
+2. Multiple valid IDs generate the correct selected population.
+3. Missing or empty selected IDs return HTTP 400.
+4. Malformed, duplicate, negative and invalid IDs are rejected.
+5. Mixed valid and unauthorized IDs reject the entire request.
+6. Foreign-school IDs are rejected.
+7. Foreign-session IDs are rejected.
+8. Nonexistent IDs are rejected.
+9. IDs outside the selected historical Class/Section filters are rejected.
+10. Explicit select-all returns the correct filtered population.
+11. Valid exclusions are applied correctly.
+12. Invalid exclusions are rejected.
+13. No invalid explicit selection can become an all-invoice export.
+14. Historical Class/Section placement remains correct.
+15. Financial totals match the selected fee records.
+16. No financial database records are modified.
+
+Use the existing authentication and session guards in the isolated test harness.
+
+Do not bypass authorization to manufacture a passing result.
+
+### 3. Archived-session protections
+
+Verify that:
+
+- Archived Ledger PDF GET remains permitted.
+- Archived Ledger PDF POST still returns `403 ARCHIVE_READ_ONLY` at this stage.
+- Archived invoice edits remain blocked.
+- Archived payment modifications remain blocked.
+- Archived refund modifications remain blocked.
+
+The archived POST allowlist correction belongs to B4-C and must not be implemented here.
+
+### 4. Financial invariance
+
+Compare before and after test results for:
+
+- Invoice amounts.
+- Discounts.
+- Paid amounts.
+- Outstanding balances.
+- Refund totals.
+- Payment statuses.
+- Invoice counts.
+- Selected report totals.
+
+Confirm that the verification process itself does not alter financial records.
+
+Do not execute real payments, refunds, invoice generation, or external gateway calls.
+
+### 5. Web session-switch verification
+
+Use existing focused Web tests to verify:
+
+- Selected IDs are cleared when Academic Sessions change.
+- Excluded IDs are cleared.
+- Selection mode resets.
+- Stale requests cannot trigger downloads.
+- Archived-session row selection remains disabled.
+
+If an isolated signed-in browser test is safely available, perform it using synthetic users only.
+
+Otherwise, report browser verification as NOT VERIFIED.
+
+### 6. Regression checks
+
+Run:
+
+- B4-B selection tests.
+- B4-A logo-security tests.
+- Historical-placement tests.
+- API build.
+- Web build.
+- Mobile typecheck if available.
+- `git diff --check`.
+
+Report pre-existing TypeScript diagnostics separately.
+
+### 7. Strict restrictions
+
+DO NOT:
+
+- Modify application source code.
+- Change selection rules.
+- Change financial calculations.
+- Change invoice generation.
+- Change payment or refund logic.
+- Modify historical enrollment logic.
+- Change Academic Session state.
+- Modify existing Development records.
+- Connect to Production.
+- Modify the archived-session allowlist.
+- Deploy.
+- Restart existing application workflows.
+- Begin B4-C.
+
+Test-only scripts and synthetic fixtures are allowed only inside the isolated verification environment.
+
+### 8. Required report
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / FAIL / BLOCKED.
+2. Disposable database identity verification.
+3. Actual database-backed route test results.
+4. Number of tests passed and failed.
+5. Valid-selection behavior.
+6. Invalid-selection behavior.
+7. Cross-school isolation results.
+8. Cross-session isolation results.
+9. Class/Section filter results.
+10. Select-all and exclusion results.
+11. Financial before/after comparison.
+12. Archived-session write-protection results.
+13. Web selection-reset results.
+14. B4-A security regression results.
+15. API/Web build results.
+16. Mobile compatibility results.
+17. Browser verification status.
+18. Source files modified.
+19. Existing database records accessed or modified.
+20. Remaining defects and verification gaps.
+21. Whether B4-C is safe to begin.
+
+### 9. Mandatory stop
+
+After verification, STOP.
+
+Do not fix discovered defects automatically.
+
+Do not change archived-session authorization.
+
+Do not begin B4-C without separate owner approval.
