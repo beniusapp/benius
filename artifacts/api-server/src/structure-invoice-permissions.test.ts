@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { feeRecords } from "@workspace/db/schema";
 import {
   InvoiceGenerationError,
   buildInvoiceDuplicateIndex,
@@ -89,6 +91,13 @@ test("structure-generated invoices persist their exact source structure ID", asy
     duplicateIndex: buildInvoiceDuplicateIndex([]),
   });
   assert.equal(inserted.feeStructureId, 61);
+
+  const query = new PgDialect().sqlToQuery(new PgDialect().buildInsertQuery({
+    table: feeRecords,
+    values: [{ feeStructureId: inserted.feeStructureId }],
+  }));
+  assert.match(query.sql, /fee_structure_id/);
+  assert.ok(query.params.includes(61));
 });
 
 test("structure invoice generation rejects a stored component total mismatch", async (t) => {
