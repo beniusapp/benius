@@ -1,0 +1,66 @@
+BENIUS — STUDENT DASHBOARD RED-DOT NOTIFICATION LOGIC AUDIT
+
+STRICTLY READ-ONLY. DO NOT MODIFY CODE.
+
+CONTEXT:
+On the Student Dashboard (/student-dashboard), the Homework and Noticeboard module cards display small red notification dots.
+
+I want to understand their exact existing notification logic before applying similar behavior to the Complaints module.
+
+PART A — HOMEWORK RED DOT
+
+Investigate:
+1. Which component renders the red dot?
+2. Which API or data source determines whether it appears?
+3. What exact event makes the red dot appear?
+4. When and how does the red dot disappear?
+5. Does it disappear when the student opens the Homework module or only after viewing individual homework items?
+6. Does its seen/unseen state persist across refreshes, logout/login, and devices?
+7. Is the logic isolated by authenticated School ID, Student ID, and Academic Session ID?
+
+PART B — NOTICEBOARD RED DOT
+
+Investigate the same seven questions for Noticeboard.
+
+PART C — SHARED NOTIFICATION ARCHITECTURE
+
+1. Do Homework and Noticeboard use the same red-dot mechanism?
+2. Identify the relevant frontend files, backend endpoints, database tables, and functions.
+3. Explain how the dashboard refreshes the red-dot status.
+4. Check whether any existing shared notification mechanism also supports Complaints.
+5. Identify any limitations or bugs in the existing logic.
+
+PART D — FUTURE COMPLAINTS INTEGRATION
+
+Without implementing anything, explain how the Complaints dashboard card could use the same visual red-dot behavior.
+
+Consider the existing persistent per-complaint read-receipt feature, which is now enabled in Development.
+
+Clearly distinguish:
+- Module-level seen/unseen notifications.
+- Individual complaint read/unread status.
+
+Do not mix these two concepts without explaining the implications.
+
+STRICT RULES:
+- READ-ONLY AUDIT ONLY.
+- No code changes.
+- No database modifications or migrations.
+- No feature-flag changes.
+- No service restarts.
+- No Production changes.
+- No Mobile work.
+- Preserve school, student, and Academic Session isolation.
+
+REPORT FORMAT:
+
+1. Homework red-dot logic.
+2. Noticeboard red-dot logic.
+3. Shared mechanism and differences.
+4. Current Complaints notification logic.
+5. Recommended approach for Complaints.
+6. Relevant file names and code locations.
+
+Keep the explanation clear and concise.
+
+WAIT FOR MY APPROVAL BEFORE IMPLEMENTATION.
