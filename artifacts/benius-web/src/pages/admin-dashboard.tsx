@@ -1967,14 +1967,7 @@ export default function AdminDashboard() {
     "leave-requests": notificationSummary.parentBadges["leave-requests"],
     complaints: notificationSummary.parentBadges["complaint-hub"],
   };
-  const failedNotificationSources = notificationSummary.sources.filter(source => source.state === "error");
-  const loadingNotifications = notificationSummary.sources.some(source => source.state === "loading");
-  const knownPendingActions = notificationSummary.sources.some(source => (source.count ?? 0) > 0);
   const hasPendingActions = (totalActionRequired ?? 0) > 0;
-  const refreshingNotifications = notificationQueries.some(query => query.isFetching);
-  const refreshNotifications = () => {
-    void refetchNotificationQueries();
-  };
 
   const studentCountAnimated   = useCountUp(me?.studentCount ?? 0);
   const facultyCountAnimated   = useCountUp(teachersList.length);
@@ -2276,7 +2269,7 @@ export default function AdminDashboard() {
 
             {/* Total Students */}
             <div
-              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              className="flex h-full items-center gap-2.5 rounded-xl px-3 py-2.5"
               style={{ background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.15)" }}
               data-testid="stat-students"
             >
@@ -2284,6 +2277,7 @@ export default function AdminDashboard() {
                 value={studentCountAnimated}
                 max={Math.max(me.studentCount, 1)}
                 color="#D4AF37"
+                size={44}
                 icon={
                   <motion.div
                     initial={{ opacity: 0, scale: 0.5 }}
@@ -2306,7 +2300,7 @@ export default function AdminDashboard() {
 
             {/* Faculty Strength */}
             <div
-              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              className="flex h-full items-center gap-2.5 rounded-xl px-3 py-2.5"
               style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.15)" }}
               data-testid="stat-teachers"
             >
@@ -2314,6 +2308,7 @@ export default function AdminDashboard() {
                 value={facultyCountAnimated}
                 max={Math.max(teachersList.length, 1)}
                 color="#3b82f6"
+                size={44}
                 icon={
                   <motion.div
                     initial={{ opacity: 0, scale: 0.5 }}
@@ -2351,7 +2346,7 @@ export default function AdminDashboard() {
               const pulseBg = isHealthy ? "bg-emerald-400" : "bg-red-400";
               return (
                 <div
-                  className="flex items-center gap-3 rounded-xl px-4 py-3"
+                  className="flex h-full items-center gap-2.5 rounded-xl px-3 py-2.5"
                   style={{ background: presenceBg, border: `1px solid ${presenceBorder}` }}
                   data-testid="stat-attendance"
                 >
@@ -2359,6 +2354,7 @@ export default function AdminDashboard() {
                     value={hasData ? attendancePctAnimated : 0}
                     max={100}
                     color={presenceColor}
+                    size={44}
                     icon={
                       <motion.div
                         initial={{ opacity: 0, scale: 0.5 }}
@@ -2415,19 +2411,19 @@ export default function AdminDashboard() {
 
             {/* Action Required — hidden for support_staff (count spans all categories, not just their allowed ones) */}
             {shouldShowAdminActionNotifications(me?.role) && <div
-              className="min-w-0 rounded-xl px-4 py-3"
+              className="flex h-full min-w-0 items-center rounded-xl px-3 py-2.5"
               style={{
                 background: hasPendingActions ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
                 border: `1px solid ${hasPendingActions ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.06)"}`,
               }}
               data-testid="stat-action-required"
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
                   <StatRing
                     value={Math.min(totalActionRequired ?? 0, 10)}
                     max={10}
                     color={hasPendingActions ? "#ef4444" : "#4b5563"}
+                    size={44}
                     icon={
                       <motion.div
                         initial={{ opacity: 0, scale: 0.5 }}
@@ -2461,65 +2457,7 @@ export default function AdminDashboard() {
                     <p className={`text-xl font-extrabold tracking-tight ${hasPendingActions ? "text-red-400" : "text-white"}`}>
                       {totalActionRequired === undefined ? "—" : actionCountAnimated}
                     </p>
-                    <p className="text-[10px] text-white/35">
-                      {notificationSummary.complete ? "Verified pending actions" : "Complete total unavailable"}
-                    </p>
                   </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={refreshNotifications}
-                  disabled={refreshingNotifications}
-                  className="shrink-0 text-white/60 hover:text-white"
-                  data-testid="button-refresh-action-required"
-                  aria-label="Refresh Action Required counts"
-                >
-                  <RefreshCw className={`h-4 w-4 ${refreshingNotifications ? "animate-spin" : ""}`} />
-                </Button>
-              </div>
-
-              {failedNotificationSources.length > 0 && (
-                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200/90"
-                  role="alert" data-testid="action-required-error">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    Could not refresh: {failedNotificationSources.map(source => source.label).join(", ")}.
-                    {knownPendingActions ? " Available counts are shown; the total is incomplete." : " Pending work is not fully verified."}
-                  </span>
-                </div>
-              )}
-
-              <div className="mt-3 space-y-1.5">
-                {notificationSummary.sources.filter(source => (source.count ?? 0) > 0).map(source => (
-                  <button
-                    key={source.id}
-                    type="button"
-                    onClick={() => setLocation(source.destination)}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
-                    data-testid={`action-required-${source.id}`}
-                  >
-                    <span className="min-w-0 truncate text-xs text-white/80">{source.label}</span>
-                    <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-red-300">
-                      {source.count}
-                      <ArrowRight className="h-3 w-3" />
-                    </span>
-                  </button>
-                ))}
-
-                {notificationSummary.complete && totalActionRequired === 0 ? (
-                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-empty">
-                    No pending actions.
-                  </p>
-                ) : loadingNotifications && !knownPendingActions ? (
-                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-loading">
-                    Checking for pending work…
-                  </p>
-                ) : !knownPendingActions && failedNotificationSources.length === 0 && !notificationSummary.complete ? (
-                  <p className="px-1 py-2 text-xs text-white/45" data-testid="action-required-loading">
-                    Pending work is still being checked.
-                  </p>
-                ) : null}
               </div>
             </div>}
 
