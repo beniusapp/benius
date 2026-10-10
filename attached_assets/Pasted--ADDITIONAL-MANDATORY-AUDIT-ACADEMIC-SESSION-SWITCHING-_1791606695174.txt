@@ -1,0 +1,172 @@
+# ADDITIONAL MANDATORY AUDIT — ACADEMIC SESSION SWITCHING
+## PRINCIPAL → FEES & PAYMENTS → FINANCIAL ANALYTICS
+### ACTIVE + ARCHIVED ACADEMIC SESSIONS
+
+This section is mandatory and extends the Financial Analytics read-only audit.
+
+BENIUS is a multi-tenant, Academic Session-focused application.
+
+The owner requires a thorough audit of Financial Analytics when switching between Active and Archived Academic Sessions.
+
+**DO NOT MODIFY ANY EXISTING FINANCIAL BUSINESS LOGIC, FORMULAS, SOURCE CODE, OR DATABASE RECORDS.**
+
+## 1. Academic Session switching
+
+Verify these scenarios:
+
+- Active Session → Archived Session.
+- Archived Session → Active Session.
+- Archived Session A → Archived Session B.
+- Rapid switching between sessions.
+- Refreshing the page after switching sessions.
+- Navigating away and returning to Financial Analytics.
+- Changing the session while a previous analytics API request is still loading.
+
+For every scenario, verify that the selected Academic Session ID is correctly propagated from the frontend through the API to all relevant database queries.
+
+Check that old session responses cannot overwrite the newly selected session's analytics.
+
+## 2. Every financial metric must be session-correct
+
+For each selected Academic Session, independently audit:
+
+1. Due This Period.
+2. Gross Collected.
+3. Net Collected.
+4. Outstanding.
+5. Collection Efficiency.
+6. Online Collection.
+7. Offline Collection.
+8. Overdue Amount.
+9. Every additional financial KPI present.
+10. Every chart, trend, and financial breakdown.
+
+Verify that each metric uses the correct selected session and authenticated school.
+
+**Never mix invoices, payments, refunds, or receivables across Academic Sessions.**
+
+Trace how payments or refunds recorded in a later calendar period are attributed to their original Academic Session under the existing BENIUS financial contract.
+
+Do not assume that calendar year and Academic Session are interchangeable.
+
+## 3. Archived-session financial accuracy
+
+For Archived Academic Sessions, verify:
+
+- Historical invoices remain associated with their correct session.
+- Historical payments are included according to existing payment rules.
+- Historical refunds are treated correctly.
+- Historical outstanding balances are calculated consistently with the existing contract.
+- Historical overdue values follow the documented reporting-date rule.
+- Partial payments are handled correctly.
+- Collection efficiency uses the correct session-specific values.
+- Online/offline collections remain session-specific.
+- Historical Class/Section placement is not replaced by the student's current Class/Section.
+
+Determine whether archived analytics are intended to show a frozen historical snapshot or a current view of financial records belonging to that archived session.
+
+Do not assume either behavior. Identify the existing contract and flag ambiguity for owner review.
+
+## 4. Date-range and Academic Session interaction
+
+Verify how the Financial Analytics date filter interacts with the selected Academic Session.
+
+Check:
+
+- Academic Year preset.
+- Custom date ranges, if available.
+- Session start and end dates.
+- Payments received after the Academic Session ends.
+- Refunds processed after the Academic Session ends.
+- IST date boundaries.
+- Switching sessions while a date filter is active.
+- Whether the displayed date range matches the actual backend query.
+
+The selected Academic Session must remain the authoritative financial scope.
+
+Date filters must not accidentally introduce another session's records.
+
+## 5. Archived-session read-only protection
+
+Financial Analytics must remain safe to view in archived sessions.
+
+Verify that:
+
+- Dashboard loading does not modify invoices.
+- Refresh does not update financial records.
+- Chart loading does not modify payments or refunds.
+- PDF export does not change financial data.
+- Archived-session financial-write restrictions remain enforced.
+- No analytics API bypasses authentication, school isolation, or session authorization.
+
+Read-only analytics must work without making archived sessions financially editable.
+
+## 6. Cross-session isolation tests
+
+Using existing safe synthetic tests, verify:
+
+- School A, Session 1 analytics.
+- School A, Session 2 analytics.
+- School B, Session 1 analytics.
+- Students promoted between sessions.
+- Same student with invoices in multiple sessions.
+- Same student with payments in multiple sessions.
+- Refunds associated with earlier-session invoices.
+- Missing or legacy session IDs.
+- Empty archived sessions.
+
+Confirm that every financial metric, chart, and export returns only the correctly authorized population.
+
+If real database testing is unavailable, report NOT VERIFIED instead of claiming success.
+
+## 7. Session-specific PDF exports
+
+For every Financial Analytics PDF export:
+
+- Confirm the selected Academic Session ID.
+- Confirm the correct school.
+- Confirm the correct reporting date range.
+- Confirm session-specific financial totals.
+- Confirm that PDF figures reconcile with dashboard figures under identical definitions.
+- Confirm that archived-session exports are read-only.
+- Confirm that switching sessions cannot download a stale PDF from the previous session.
+
+## 8. Required session audit report
+
+Provide a separate section titled:
+
+**ACADEMIC SESSION ISOLATION — FINANCIAL ANALYTICS**
+
+Include:
+
+| Test scenario | Expected behavior | Actual behavior | Evidence | PASS/FAIL/NOT VERIFIED |
+
+Report separately:
+
+- Active-session correctness.
+- Archived-session correctness.
+- Session-switch correctness.
+- Historical financial accuracy.
+- Cross-session isolation.
+- Cross-school isolation.
+- Date-range consistency.
+- PDF export consistency.
+- Archived-session read-only protection.
+
+For every defect, provide exact file and line references, the financial impact, and the smallest proposed correction.
+
+**Do not implement any correction without explicit owner approval.**
+
+## FINAL RESTRICTION
+
+This remains a STRICTLY READ-ONLY AUDIT.
+
+No application code changes.
+
+No financial formula changes.
+
+No database modifications.
+
+No deployment or workflow restart.
+
+Stop after submitting the complete audit report.

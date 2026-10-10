@@ -1,0 +1,597 @@
+# BENIUS — PRINCIPAL PORTAL
+# FEES & PAYMENTS → FINANCIAL ANALYTICS
+## COMPREHENSIVE FINANCIAL ACCURACY AND BUSINESS LOGIC AUDIT
+### STRICTLY READ-ONLY — NO IMPLEMENTATION
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner requests an extremely thorough, end-to-end audit of ONLY:
+
+**Principal Portal → Fees & Payments → Financial Analytics**
+
+This is a FINANCIAL ACCURACY AUDIT, not a development task.
+
+The objective is to determine whether every financial metric, formula, API, aggregation, filter, chart, report, and financial business rule is functioning correctly.
+
+### CRITICAL INSTRUCTIONS
+
+1. DO NOT MODIFY ANY APPLICATION SOURCE CODE.
+2. DO NOT MODIFY ANY EXISTING FEES & PAYMENTS BUSINESS LOGIC.
+3. DO NOT MODIFY DATABASE RECORDS.
+4. DO NOT CHANGE FINANCIAL FORMULAS.
+5. DO NOT FIX ANY ISSUE AUTOMATICALLY.
+6. DO NOT MODIFY ANY OTHER FEES & PAYMENTS MODULE.
+7. DO NOT DEPLOY OR RESTART APPLICATION WORKFLOWS.
+8. DO NOT ACCESS PRODUCTION.
+9. DO NOT CREATE NEW POSTGRESQL CLUSTERS.
+10. DO NOT REOPEN THE PREVIOUS B4 DATABASE INVESTIGATIONS.
+
+If any defect is discovered, document it with exact code evidence, expected behavior, actual behavior, severity, and recommended correction.
+
+Wait for explicit owner approval before implementing anything.
+
+---
+
+# PHASE 1 — COMPLETE FINANCIAL ANALYTICS INVENTORY
+
+Inspect the complete Financial Analytics tab.
+
+Identify every:
+
+- Summary card.
+- Financial metric.
+- Chart and graph.
+- Collection trend.
+- Payment breakdown.
+- Outstanding/receivable breakdown.
+- Overdue calculation.
+- Filter.
+- Date selector.
+- Academic Year selector.
+- Refresh action.
+- PDF export.
+- Table.
+- Drill-down.
+- Loading/error/empty state.
+
+Do not audit only the visible portion of the screenshot.
+
+Inspect the entire page, including components below the fold and conditional sections.
+
+For each element, identify:
+
+1. Frontend component and file location.
+2. Backend endpoint.
+3. Backend handler.
+4. Database tables involved.
+5. Calculation or aggregation logic.
+6. Academic Session handling.
+7. School/tenant isolation.
+8. Date/time handling.
+9. Export/report behavior, if applicable.
+
+Produce a complete inventory before assessing correctness.
+
+---
+
+# PHASE 2 — FINANCIAL METRIC ACCURACY
+
+Thoroughly inspect these metrics:
+
+## A. DUE THIS PERIOD
+
+Determine the exact definition implemented.
+
+Check:
+
+- Which invoices are included?
+- Is invoice due date used?
+- Is the selected IST date range applied correctly?
+- Are partially paid invoices included?
+- Are cancelled or void invoices excluded as intended?
+- Are discounts handled correctly?
+- Are duplicate invoices counted?
+- Are refunds relevant to this metric?
+- Are invoices from another Academic Session excluded?
+- Are invoices from another school excluded?
+
+Verify the implemented formula against the intended business definition.
+
+Do not assume that Due This Period means Outstanding.
+
+## B. GROSS COLLECTED
+
+Verify:
+
+- Which payment statuses count as successfully collected?
+- Are failed payments excluded?
+- Are pending payments excluded?
+- Are duplicate gateway callbacks excluded?
+- Are online and offline payments included correctly?
+- Are payment timestamps used consistently?
+- Are refunds treated according to the existing gross-collection definition?
+- Are payment attempts incorrectly counted as completed payments?
+- Are duplicate transactions counted?
+- Are partial payments counted accurately?
+
+## C. NET COLLECTED
+
+Trace the actual formula.
+
+Verify:
+
+- How gross collection is derived.
+- Which refund statuses reduce net collection.
+- Whether failed or pending refunds are excluded appropriately.
+- Whether partial refunds are handled correctly.
+- Whether a refund is deducted only once.
+- Whether refund timing affects the selected reporting period.
+- Whether any other adjustments are part of the existing definition.
+
+Do not assume a new formula. Determine the actual business contract first.
+
+## D. OUTSTANDING
+
+Check:
+
+- Total payable amount.
+- Successful payments.
+- Discounts and adjustments.
+- Refund effects.
+- Partial payments.
+- Overpayments.
+- Cancelled or void invoices.
+- Historical-session records.
+- Duplicate or reversed transactions.
+
+Determine whether the displayed Outstanding represents:
+
+- Total unpaid balance as of now;
+- Outstanding for invoices due within the selected range; or
+- Another documented definition.
+
+Verify consistency with the actual implementation.
+
+## E. COLLECTION EFFICIENCY
+
+Identify the exact numerator and denominator.
+
+Check:
+
+- Zero denominator behavior.
+- Percentage accuracy.
+- Rounding.
+- Values exceeding 100%.
+- Partial payments.
+- Overpayments.
+- Date-range consistency.
+- Whether the calculation mixes unrelated reporting populations.
+
+Do not silently redefine this KPI.
+
+## F. ONLINE COLLECTION
+
+Check:
+
+- Online payment classification.
+- Successful gateway payments.
+- Payment verification status.
+- Duplicate callbacks.
+- Failed/pending attempts.
+- Refund treatment.
+- Date filters.
+- School and Academic Session scope.
+
+## G. OFFLINE COLLECTION
+
+Check:
+
+- Cash payments.
+- Bank transfers.
+- Cheques, where supported.
+- Other existing offline methods.
+- Recorded versus verified payment status.
+- Rejected/reversed entries.
+- Duplicate offline records.
+- Partial payments.
+- Payment-date handling.
+
+Use the actual BENIUS payment-method contract.
+
+## H. OVERDUE AMOUNT
+
+Check:
+
+- Invoice due dates.
+- Current IST date.
+- Selected date range.
+- Unpaid and partially paid invoices.
+- Cancelled invoices.
+- Grace periods, if supported.
+- Future-dated invoices.
+- Archived Academic Sessions.
+- Whether overdue is calculated as of today or the selected reporting date.
+
+Clearly document the implemented definition.
+
+---
+
+# PHASE 3 — CROSS-METRIC RECONCILIATION
+
+Check that related financial metrics are mathematically consistent.
+
+Examples to investigate:
+
+- Gross versus online/offline collection.
+- Gross versus net collection.
+- Refund effects.
+- Due versus outstanding.
+- Outstanding versus overdue.
+- Collection efficiency versus its actual numerator and denominator.
+- Summary cards versus charts.
+- Summary cards versus detailed reports.
+- Summary cards versus Ledger & Transactions.
+
+IMPORTANT:
+
+Do not force equalities where the metrics have different populations, date bases, statuses, or definitions.
+
+Explain every legitimate difference.
+
+Flag genuine mismatches.
+
+Where possible, independently reproduce calculations using read-only queries against an explicitly authorized safe data source.
+
+If safe database access is unavailable, report database reconciliation as NOT VERIFIED.
+
+Never access Development financial records without separate explicit authorization.
+
+---
+
+# PHASE 4 — ACADEMIC SESSION ISOLATION
+
+BENIUS is strongly Academic Session focused.
+
+Verify that every Financial Analytics metric respects:
+
+- Authenticated school ID.
+- Selected Academic Session ID.
+- Correct fee-record session ownership.
+- Correct payment/session associations.
+- Correct refund/session associations.
+- Historical Academic Session selection.
+- Archived Academic Session behavior.
+
+Test the logic for:
+
+1. Active session.
+2. Archived session.
+3. Switching between sessions.
+4. Students promoted to a new Class.
+5. Students with financial records in multiple sessions.
+6. Payments recorded after an invoice's original session ended.
+7. Missing or legacy session IDs.
+
+Determine whether cross-session totals or financial records can leak into the selected session.
+
+**Cross-school and cross-session financial leakage is CRITICAL.**
+
+Do not modify session state.
+
+---
+
+# PHASE 5 — MULTI-TENANT SECURITY
+
+BENIUS is a multi-tenant application.
+
+School A must never see School B's:
+
+- Invoice amounts.
+- Payments.
+- Refunds.
+- Outstanding balances.
+- Financial analytics.
+- Financial PDF reports.
+
+Trace tenant scoping through every query and helper.
+
+Verify that school identity is derived from authenticated server-side context, not blindly trusted from client parameters.
+
+Inspect joins, aggregates, subqueries, cached responses, and export endpoints.
+
+Identify any missing tenant filter or insecure join.
+
+Do not assume that a parent query's school filter automatically protects every joined or aggregated table.
+
+---
+
+# PHASE 6 — DATE AND TIME ACCURACY
+
+BENIUS uses:
+
+**Asia/Kolkata (IST)**
+
+Inspect:
+
+- Academic Year filter.
+- Custom date ranges, if present.
+- Current-period presets.
+- Start and end date inclusivity.
+- Midnight boundaries.
+- Month-end boundaries.
+- Financial year boundaries, where applicable.
+- Leap years.
+- Payment timestamps.
+- Refund timestamps.
+- Invoice due dates.
+- Browser versus server timezone.
+- UTC database timestamps converted to IST.
+- PDF reporting periods.
+
+Look for off-by-one-day errors and inconsistent date filtering.
+
+Confirm whether invoice due dates and payment received dates use their respective correct reporting rules.
+
+---
+
+# PHASE 7 — FINANCIAL EDGE CASES
+
+Audit the existing logic against:
+
+1. Zero invoices.
+2. Zero successful payments.
+3. Fully paid invoices.
+4. Partially paid invoices.
+5. Multiple payments for one invoice.
+6. Overpayments.
+7. Discounts.
+8. Fee waivers, if supported.
+9. Cancelled/void invoices.
+10. Failed payments.
+11. Pending payments.
+12. Duplicate gateway callbacks.
+13. Offline payment revisions.
+14. Payment reversals, if supported.
+15. Full refunds.
+16. Partial refunds.
+17. Failed/pending refunds.
+18. Refunds recorded in a later reporting period.
+19. Overdue invoices.
+20. Future-dated invoices.
+21. Archived-session invoices.
+22. Missing/legacy data.
+23. Duplicate records.
+24. Zero denominators.
+25. Negative balances.
+26. Large financial amounts.
+27. Currency precision and rounding.
+
+For every case, identify the expected result under BENIUS's existing rules.
+
+Distinguish confirmed bugs from undefined business requirements.
+
+Do not invent or replace business policies.
+
+---
+
+# PHASE 8 — CHARTS, GRAPHS AND BREAKDOWNS
+
+Audit every chart or breakdown actually present in Financial Analytics.
+
+Verify:
+
+- Source API.
+- Aggregation logic.
+- Labels.
+- Date buckets.
+- Payment categories.
+- School/session filters.
+- Correct handling of empty periods.
+- Rounding and formatting.
+- Consistency with summary cards.
+- No duplicated payment/refund totals.
+- Correct ordering and grouping.
+
+Do not invent new charts or suggest redesigns unless a confirmed defect requires owner consideration.
+
+---
+
+# PHASE 9 — REFRESH, FILTERS AND UI CORRECTNESS
+
+Verify:
+
+- Academic Session changes trigger correct data loading.
+- Date-range changes trigger correct data loading.
+- Refresh retrieves the correct selected context.
+- Stale responses cannot overwrite newer session data.
+- Loading indicators behave correctly.
+- API errors are not displayed as misleading ₹0 values.
+- No-data states are distinguishable from failed requests.
+- Currency formatting is consistent.
+- Percentages use correct precision.
+- Cards and charts show the same selected context.
+- Cached data is not reused across schools or sessions.
+- The displayed update timestamp is accurate.
+
+Inspect both code and tests.
+
+If signed-in UI testing is unavailable, clearly mark it NOT VERIFIED.
+
+---
+
+# PHASE 10 — FINANCIAL ANALYTICS PDF EXPORT
+
+Inspect all PDF export actions inside Financial Analytics.
+
+Verify:
+
+- Export uses the same selected school.
+- Export uses the same Academic Session.
+- Export uses the same date range.
+- PDF totals agree with the dashboard under identical definitions.
+- Payment/refund status filters match.
+- Currency and rounding match.
+- Report labels and dates are correct.
+- Archived-session access is safe.
+- Unauthorized users cannot export another school's report.
+- PDF generation does not modify financial data.
+
+Do not confuse Financial Analytics PDF exports with the separate Ledger PDF endpoints previously corrected.
+
+---
+
+# PHASE 11 — PERFORMANCE AND RELIABILITY
+
+Read-only inspection of:
+
+- Query aggregation efficiency.
+- Large school datasets.
+- Pagination where relevant.
+- Database indexing.
+- Repeated or N+1 queries.
+- Expensive calculations.
+- Request timeouts.
+- Frontend refresh behavior.
+- Potential duplicate requests.
+- Cache isolation.
+- Error handling.
+
+Identify performance risks without implementing optimizations.
+
+Do not change indexes or database schema.
+
+---
+
+# PHASE 12 — TESTING AND EVIDENCE
+
+Use existing tests and isolated in-memory/mock synthetic fixtures where possible.
+
+Run relevant existing test suites without changing source files.
+
+Independently calculate expected financial values for synthetic cases.
+
+Compare expected versus actual results.
+
+For every verification, label the evidence:
+
+- SOURCE VERIFIED
+- UNIT TEST PASSED
+- MOCKED ROUTE TEST PASSED
+- DATABASE VERIFIED
+- SIGNED-IN UI VERIFIED
+- NOT VERIFIED
+
+Do not claim database verification from mocked SQL tests.
+
+Do not claim UI verification from source inspection alone.
+
+Do not create a new PostgreSQL cluster or resume the old B4 database investigation.
+
+If tests require source changes, migrations, fixture insertion into existing databases, or real financial records, STOP and report the limitation.
+
+---
+
+# PHASE 13 — REQUIRED FINAL AUDIT REPORT
+
+Provide a thorough, structured report containing:
+
+## A. Executive summary
+
+- Overall result: PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+- Whether Financial Analytics is mathematically accurate.
+- Whether its existing business logic is consistently implemented.
+- Whether any cross-school/session leakage exists.
+- Whether any financial values are misleading or incorrectly calculated.
+
+## B. Complete component inventory
+
+List every Financial Analytics card, chart, filter, report, and export.
+
+## C. Metric-by-metric audit
+
+For every metric, provide:
+
+| Metric | Existing formula | Data source | School/session scope | Date rule | Test evidence | Result |
+
+## D. Business logic defects
+
+For each confirmed issue:
+
+- Severity: CRITICAL / HIGH / MEDIUM / LOW.
+- Exact file and line numbers.
+- Existing behavior.
+- Expected behavior under the documented contract.
+- Reproducible scenario.
+- Financial impact.
+- Recommended minimal correction.
+- Whether correcting it would change business logic.
+
+## E. Security and isolation
+
+- Tenant isolation.
+- Academic Session isolation.
+- Archived-session protections.
+- Authorization.
+- Export security.
+
+## F. Reconciliation
+
+Explain differences, if any, between:
+
+- Due.
+- Gross collected.
+- Net collected.
+- Outstanding.
+- Overdue.
+- Online collection.
+- Offline collection.
+- Collection efficiency.
+- Dashboard charts.
+- Financial Analytics PDF reports.
+
+## G. Tests
+
+Provide test names, counts, expected values, actual values, and PASS/FAIL status.
+
+## H. Unverified areas
+
+Explicitly list anything not tested against a real database or signed-in UI.
+
+## I. Proposed corrections
+
+Rank confirmed defects by financial risk.
+
+Separate:
+
+1. Financial correctness defects.
+2. Tenant/session security defects.
+3. UI/display defects.
+4. Performance concerns.
+5. Undefined business requirements.
+
+Do not implement any proposed correction.
+
+## J. Safety confirmation
+
+Confirm:
+
+- Application source files changed: NONE.
+- Existing Fees & Payments business logic changed: NONE.
+- Database records modified: NONE.
+- Production accessed: NO.
+- Deployment performed: NO.
+- Existing workflows restarted: NO.
+
+## MANDATORY STOP
+
+After producing the audit report, STOP.
+
+Do not fix anything.
+
+Do not change formulas.
+
+Do not modify payment, invoice, refund, discount, or outstanding calculations.
+
+Do not begin another development stage.
+
+Wait for explicit owner review and approval.
