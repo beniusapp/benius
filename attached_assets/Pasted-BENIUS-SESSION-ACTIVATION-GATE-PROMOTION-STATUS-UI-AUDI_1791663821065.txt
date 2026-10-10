@@ -1,0 +1,64 @@
+BENIUS — SESSION ACTIVATION GATE PROMOTION STATUS UI AUDIT
+
+MODE: STRICT READ-ONLY. NO CHANGES.
+
+LOCATION:
+Admin Portal → School Setup → Academic Sessions → Activate → Session Activation Gate
+
+BUSINESS REQUIREMENT:
+
+The Principal should see a simple, understandable Activation Gate.
+
+Currently, the gate includes:
+1. Safety Lock
+2. Student Registry Placement Check
+3. Promotion Status with an individual student list
+4. Activation Effects
+5. Confirmation checkboxes
+6. Activate Session button
+
+I want to hide ONLY the detailed Promotion Status section if doing so is safe.
+
+REQUIRED INVESTIGATION:
+
+1. Locate the frontend component and backend endpoints used by the Activation Gate.
+
+2. Determine whether Promotion Status is purely informational or participates in activation validation, eligibility, confirmation or blocking rules.
+
+3. Check whether the Student Registry Placement Check already provides the information required for safe activation.
+
+4. Verify whether promotion history and active target-session enrolments can differ, and whether hiding the Promotion Status list would conceal any critical warning.
+
+5. Determine whether the Promotion Status section can be hidden without changing its backend calculations or removing any activation safety checks.
+
+6. Confirm that the following remain unchanged:
+   - Safety Lock and ACTIVATE typing requirement
+   - Student Registry Placement Check
+   - Activation Effects
+   - Confirmation checkboxes
+   - Activation eligibility and server-side validation
+   - Existing student promotion and enrolment data
+   - Academic Session isolation
+   - School/tenant isolation
+   - Archived-session protection
+
+7. Recommend whether to:
+   - Hide the entire Promotion Status section, or
+   - Replace it with a small summary/warning only if necessary.
+
+REPORT CONCISELY:
+- Is Promotion Status informational only? YES/NO
+- Does activation depend on it? YES/NO
+- Is the Registry Placement Check sufficient for activation safety?
+- Safest minimal UI-only change
+- Exact files involved
+- Any risks
+
+STRICT SAFETY:
+Do not modify code, database, tests or configuration.
+Do not activate any session.
+Do not change promotion records or student enrolments.
+Do not restart workflows.
+No Production or Mobile changes.
+
+STOP AFTER AUDIT AND WAIT FOR APPROVAL.
