@@ -1,0 +1,55 @@
+BENIUS — STAGE SC-2C
+
+SAFE DEVELOPMENT API STARTUP PREPARATION
+
+MODE: SOURCE CHANGES AND TESTS ONLY — NO RESTART
+
+CONTEXT:
+The Student Complaint read-receipt feature is implemented and tested, but activation is blocked because API startup imports legacy-index.ts, which executes maintenance SQL including DROP operations.
+
+OBJECTIVE:
+Make Development API startup safe without changing existing database records, business logic, or Production behavior.
+
+TASKS:
+
+1. Inspect the exact startup call path that executes legacy-index.ts and its maintenance SQL.
+
+2. Identify all startup database operations that can modify, delete, backfill, reconcile, or restructure existing data.
+
+3. Introduce a Development-only, default-safe guard that prevents these startup maintenance operations from executing automatically.
+
+4. Preserve ordinary API startup, authentication, routing, and required read-only initialization.
+
+5. Do not change Production startup behavior.
+
+6. Ensure the guard defaults to maintenance DISABLED in Development, even when its environment variable is missing.
+
+7. Do not silently skip an operation that is essential for correct API startup. Report any dependency or blocker.
+
+8. Add focused tests proving that Development startup cannot execute guarded maintenance SQL when disabled, including DROP, ALTER, backfill, reconciliation, and other write operations.
+
+9. Confirm that no unrelated startup path bypasses the guard.
+
+10. Run isolated tests and API build only.
+
+STRICT SAFETY RULES:
+- Development source changes only.
+- No database connections or SQL execution.
+- No migrations.
+- No database mutations.
+- No feature flag activation.
+- No workflow or API restart.
+- No deployment.
+- No Production changes.
+- No Mobile work.
+- Do not alter the Student Complaint receipt implementation.
+
+FINAL REPORT:
+A. Files changed.
+B. Startup SQL paths identified.
+C. Guard behavior and default.
+D. Any operations still able to mutate the database during startup.
+E. Focused tests and API build results.
+F. Remaining blockers to safe activation.
+
+STOP after reporting. Do not restart.
