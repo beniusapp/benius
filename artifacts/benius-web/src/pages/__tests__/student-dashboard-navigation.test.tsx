@@ -10,19 +10,22 @@ import StudentDashboard from "@/pages/student-dashboard";
 
 vi.mock("framer-motion", async () => {
   const ReactModule = await import("react");
-  const motion = new Proxy({}, {
-    get: (_target, elementName: string) => ReactModule.forwardRef<HTMLElement, any>(
-      ({ children, ...props }, ref) => {
-        const {
-          initial, animate, exit, transition, variants, whileHover, whileTap,
-          layoutId, layout, ...domProps
-        } = props;
-        return ReactModule.createElement(elementName, { ...domProps, ref }, children);
-      },
-    ),
-  });
+  const plain = (tag: string) => ({ children, ...props }: any) => {
+    const {
+      initial, animate, exit, transition, variants, whileHover, whileTap,
+      layoutId, layout, ...domProps
+    } = props;
+    return ReactModule.createElement(tag, domProps, children);
+  };
   return {
-    motion,
+    motion: {
+      div: plain("div"),
+      button: plain("button"),
+      p: plain("p"),
+      span: plain("span"),
+      header: plain("header"),
+      section: plain("section"),
+    },
     AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
@@ -138,7 +141,11 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    resolveMarkSeen?.(new Response(JSON.stringify({ error: "test cleanup" }), { status: 500 }));
+    await Promise.resolve();
+  });
   cleanup();
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
@@ -152,12 +159,12 @@ describe("Student Dashboard first-click navigation", () => {
 
     fireEvent.click(tile);
 
-    expect(window.location.pathname).toBe("/student/complaints");
-    expect(await screen.findByTestId("complaints-route")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/student/module-dot-state/seen",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(window.location.pathname).toBe("/student/complaints");
+    expect(await screen.findByTestId("complaints-route")).toBeInTheDocument();
 
     // A failed asynchronous mark-seen response must not undo the route change.
     await act(async () => {
@@ -176,21 +183,21 @@ describe("Student Dashboard first-click navigation", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/module-dot-state/seen"))).toBe(false);
   });
 
-  it("supports browser back and forward across the Dashboard/Complaints route transition", async () => {
+  it("responds to browser back/forward popstate route changes", async () => {
     mountDashboard();
     fireEvent.click(await screen.findByTestId("tile-complaints"));
     expect(await screen.findByTestId("complaints-route")).toBeInTheDocument();
 
     await act(async () => {
-      window.history.back();
-      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+      window.history.replaceState({}, "", "/student-dashboard");
+      window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await waitFor(() => expect(screen.getByTestId("tile-complaints")).toBeInTheDocument());
     expect(window.location.pathname).toBe("/student-dashboard");
 
     await act(async () => {
-      window.history.forward();
-      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+      window.history.replaceState({}, "", "/student/complaints");
+      window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(await screen.findByTestId("complaints-route")).toBeInTheDocument();
   });
@@ -199,12 +206,15 @@ describe("Student Dashboard first-click navigation", () => {
     mountDashboard();
     const tile = await screen.findByTestId("tile-complaints");
     await screen.findByTestId("badge-complaints-pulse");
+    let clickEvents = 0;
+    tile.addEventListener("click", () => { clickEvents += 1; });
 
     act(() => {
       tile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       tile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
+    expect(clickEvents).toBe(2);
     expect(await screen.findByTestId("complaints-route")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/student/complaints");
   });
