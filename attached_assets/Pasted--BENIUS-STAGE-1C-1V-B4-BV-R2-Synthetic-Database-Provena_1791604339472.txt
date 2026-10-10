@@ -1,0 +1,147 @@
+# BENIUS — STAGE 1C-1V-B4-BV-R2
+## Synthetic Database Provenance and Schema Safety Audit
+### OWNER APPROVED — READ ONLY
+
+The B4-BV-R1 investigation established that the approved disposable PostgreSQL database contains 20 application tables matching the expected B2 synthetic schema.
+
+The original B1 live guard requires zero application tables and correctly refused the database-backed verification.
+
+The owner authorizes a narrow read-only audit to determine whether the existing initialized disposable database can safely be reused.
+
+**DO NOT MODIFY APPLICATION SOURCE CODE, DATABASE CONTENTS, SCHEMA, OR FINANCIAL BUSINESS LOGIC.**
+
+### 1. Revalidate database identity
+
+Verify:
+
+- Approved B1 data directory and Unix socket.
+- PostgreSQL version 16.
+- System identifier `7694745870763171778`.
+- Port `55432`.
+- Empty `listen_addresses`.
+- Database `benius_fees_1c1v_b1`.
+- Role `benius_fees_1c1v_b1_role`.
+
+Use explicit connection parameters only.
+
+Do not use the default DATABASE_URL.
+
+Stop immediately if any identity check fails.
+
+### 2. Inspect B2 fixture provenance
+
+Read the existing B2 test runner, support SQL, fixture setup and cleanup logic.
+
+Determine:
+
+- Which tables B2 creates.
+- Which synthetic records B2 inserts.
+- Whether fixture markers or reserved synthetic identifiers exist.
+- Whether the runner leaves the schema and fixtures behind.
+- Whether there is reliable evidence connecting the existing database to B2.
+
+Do not assume matching table names prove fixture provenance.
+
+### 3. Read-only schema comparison
+
+Using PostgreSQL system catalogs, compare the existing database with the B2 expected schema.
+
+Check:
+
+- Schema-qualified table names.
+- Column names and types.
+- Primary keys.
+- Foreign keys.
+- Unique constraints.
+- Relevant indexes.
+- Sequences.
+- Unexpected relations.
+
+Report differences without modifying them.
+
+### 4. Safe fixture inspection
+
+Inspect only the minimum metadata needed to assess whether fixtures are synthetic.
+
+Permitted:
+
+- Table row counts.
+- Schema metadata.
+- Explicit synthetic fixture markers where documented in the B2 runner.
+- Narrow aggregate checks against documented synthetic identifiers.
+
+Do not dump student names, email addresses, payment details, financial amounts, or other row contents.
+
+Do not claim that data is synthetic solely because the database name is synthetic.
+
+If provenance cannot be established safely, report NOT PROVEN.
+
+### 5. Review initialized-database guard design
+
+Propose, but do not implement, a separate initialized-database verification mode.
+
+The proposal must:
+
+- Preserve the existing B1 empty-database guard unchanged.
+- Verify the exact PostgreSQL cluster identity.
+- Verify the exact database and role.
+- Enforce private socket-only connectivity.
+- Validate an explicit schema allowlist.
+- Reject unexpected relations or schema drift.
+- Fail closed on uncertain fixture provenance.
+- Never permit Development or Production database connections.
+- Prevent accidental use of default application connection settings.
+
+Do not introduce a bypass flag that simply disables the table-count check.
+
+### 6. Strict restrictions
+
+DO NOT:
+
+- Change any application files.
+- Modify the existing guard.
+- Add a new guard.
+- Create, update or delete database records.
+- Run migrations.
+- Reset the database.
+- Execute Ledger PDF routes.
+- Run financial transactions.
+- Change Academic Session state.
+- Restart application workflows.
+- Deploy.
+- Begin B4-C.
+
+Controlled startup and shutdown of the approved disposable PostgreSQL cluster are permitted for this read-only audit.
+
+### 7. Required final report
+
+Provide:
+
+1. Overall result: PROVEN / PARTIALLY PROVEN / NOT PROVEN / BLOCKED.
+2. Database identity verification.
+3. B2 fixture provenance findings.
+4. Evidence supporting fixture origin.
+5. Schema comparison results.
+6. Unexpected tables, columns or constraints.
+7. Table row counts, without personal data.
+8. Whether synthetic-only contents can be established.
+9. Proposed initialized-database guard design.
+10. Risks and limitations.
+11. Whether any application code changed.
+12. Whether any database records changed.
+13. Whether Development or Production was accessed.
+14. Whether workflows were restarted.
+15. Whether B4-BV route verification can safely proceed.
+16. Recommended next stage.
+
+### 8. Mandatory stop
+
+After reporting, STOP.
+
+Do not implement the proposed guard.
+
+Do not run database-backed route tests.
+
+Do not begin B4-C.
+
+Wait for explicit owner approval.
