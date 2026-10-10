@@ -1,0 +1,61 @@
+# BENIUS — RESOLVE FEE STRUCTURES DATABASE BLOCKER
+
+We have already completed the Fee Structures code corrections and 14 focused tests.
+
+The only remaining blocker is the missing PostgreSQL column `fee_records.fee_structure_id`.
+
+The owner is nontechnical and expects you, as the development environment, to investigate and explain the database setup. Do not repeatedly ask the owner to locate database resources or provide technical configuration.
+
+## YOUR TASK
+
+Investigate the BENIUS project's actual database configuration using the tools and permissions available to you.
+
+1. Determine which PostgreSQL database is used by the API Development workflow.
+
+2. Determine which PostgreSQL database is used by Production.
+
+3. Establish whether Development and Production are separate databases.
+
+4. Inspect the project's Replit database integrations, resource bindings, workflow configuration and relevant environment configuration.
+
+5. If metadata is insufficient, investigate whether you can safely identify the targets through a read-only inspection of database connection configuration or non-sensitive connection identity. Do not disclose DATABASE_URL values, credentials, hosts containing secrets, or tokens.
+
+6. Do not assume two environments are separate merely because Replit normally supports separate databases.
+
+7. Do not connect to or query a database whose identity and safety cannot be established. If a safe read-only connection is possible to a positively identified Development database, inspect only database/schema metadata, not financial records.
+
+8. Determine whether the Development database already contains `fee_records.fee_structure_id`, and whether it is nullable integer.
+
+9. Identify the exact remaining steps required to finish the Fee Structures correction safely.
+
+## IMPORTANT RESTRICTIONS
+
+- No database changes.
+- No ALTER TABLE execution.
+- No Drizzle push or push-force.
+- No migrations or backfills.
+- No code modifications.
+- No deployment.
+- No workflow restart.
+- No financial record queries.
+- No Mobile changes.
+- No production database modifications.
+- Never expose secrets.
+
+## REQUIRED ANSWER
+
+A. Which database does Development use? Give a non-sensitive identifier and evidence.
+
+B. Which database does Production use? Give a non-sensitive identifier and evidence.
+
+C. Are they definitely separate?
+
+D. Does the Development database already have `fee_structure_id`?
+
+E. What exact safe action is needed next?
+
+F. Can you complete the remaining work with your available permissions after owner approval?
+
+G. If still blocked, explain the exact technical or permission limitation and the smallest action needed to resolve it. Do not simply repeat that DATABASE_URL is a secret.
+
+STOP after the report. Do not execute any changes.
