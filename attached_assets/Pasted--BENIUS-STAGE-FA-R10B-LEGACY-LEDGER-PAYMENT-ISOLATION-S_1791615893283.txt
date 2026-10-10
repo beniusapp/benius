@@ -1,0 +1,414 @@
+# BENIUS — STAGE FA-R10B
+## LEGACY LEDGER PAYMENT ISOLATION & SCHOOL-WIDE AUDIT LOG DESIGN AUDIT
+
+### STRICT READ-ONLY — NO IMPLEMENTATION AUTHORIZED
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+FA-R10A classified all six Principal Portal → Fees & Payments modules by Academic Session ownership.
+
+The owner has confirmed three decisions:
+
+1. Fee Structures remain SCHOOL-GLOBAL. Generated invoices remain ACADEMIC-SESSION-SPECIFIC.
+2. The Audit Log may benefit from a separate SCHOOL-WIDE EVENTS view, but this is NOT approved for implementation.
+3. The possible omission of legacy payments with NULL `payment_records.session_id` must be verified using synthetic tests before any correction is considered.
+
+This stage is an investigation and verification exercise only.
+
+## 1. Mandatory safety restrictions
+
+DO NOT:
+
+- Modify application source code.
+- Modify database schema.
+- Query real financial database records.
+- Update or backfill legacy payments.
+- Modify invoices.
+- Modify payment records.
+- Modify refunds.
+- Modify Academic Sessions.
+- Modify enrollments.
+- Modify Fee Structures.
+- Change Ledger calculations.
+- Change Financial Analytics formulas.
+- Change Audit Log behavior.
+- Create new Audit Log UI.
+- Run migrations.
+- Restart workflows.
+- Deploy.
+- Initiate payments, refunds, or reminders.
+
+Temporary, non-persistent synthetic test scripts are permitted if they do not modify repository files or connect to a real database.
+
+Do not create PostgreSQL clusters or new databases.
+
+## PART A — LEGACY LEDGER PAYMENT INVESTIGATION
+
+## 2. Investigate NULL-session linked payments
+
+FA-R10A identified a possible inconsistency:
+
+`payment_records.session_id` is nullable.
+
+The Ledger payment-list query appears to filter directly by `payment_records.session_id`.
+
+Financial Analytics may instead attribute payments through their linked invoice's Academic Session.
+
+Investigate this carefully.
+
+Trace:
+
+payment_records
+→ fee_record_id
+→ fee_records
+→ invoice.session_id
+→ authenticated school
+→ selected Academic Session
+→ Ledger display
+→ Financial Analytics
+→ Ledger PDF/CSV exports
+→ Payment receipt and transaction detail.
+
+Identify all relevant queries and exact source locations.
+
+Do not assume all Ledger paths behave identically.
+
+## 3. Construct synthetic payment scenarios
+
+Use synthetic data representing:
+
+**Scenario A — Normal payment**
+
+- School A.
+- Archived Session 2026–2027.
+- Invoice belongs to 2026–2027.
+- Payment belongs to the same invoice.
+- Payment `session_id = 2026–2027`.
+
+Expected: Payment is included in the selected archived session.
+
+**Scenario B — Legacy NULL-session payment**
+
+- School A.
+- Archived Session 2026–2027.
+- Invoice belongs to 2026–2027.
+- Payment links to that invoice.
+- Payment `session_id = NULL`.
+
+Determine whether the payment appears in:
+
+- Ledger payment list.
+- Ledger summaries.
+- Financial Analytics.
+- Payment history.
+- Ledger CSV.
+- Ledger PDF.
+- Payment transaction PDF.
+- Receipt/detail views.
+
+**Scenario C — Cross-session mismatch**
+
+- Payment `session_id = 2027–2028`.
+- Linked invoice `session_id = 2026–2027`.
+
+Determine how each read path handles the mismatch.
+
+Do not silently normalize the payment.
+
+**Scenario D — Cross-school mismatch**
+
+- Payment claims School A.
+- Linked invoice belongs to School B.
+
+Verify no cross-school payment exposure or attribution.
+
+**Scenario E — Orphan payment**
+
+- Payment has no valid linked invoice.
+
+Determine whether it is excluded, displayed as unresolved, or otherwise handled.
+
+**Scenario F — Active-session legacy payment**
+
+- Payment has NULL session ID.
+- Linked invoice belongs to the active session.
+
+Check whether startup backfill is necessary for display correctness.
+
+Do not execute startup backfill.
+
+**Scenario G — Refund on legacy payment**
+
+- A processed refund is associated with a payment whose session ID is NULL.
+- The invoice belongs to an archived session.
+
+Verify whether Ledger and Analytics attribute the refund consistently.
+
+Do not change refund processing.
+
+## 4. Independently compare Ledger and Analytics
+
+For each scenario, determine:
+
+- Whether the payment is included.
+- Which Academic Session owns it.
+- Whether the payment amount is counted.
+- Whether processed refunds affect the relevant balance.
+- Whether a PDF/CSV export includes it.
+- Whether tenant isolation is maintained.
+
+Use independently specified expected outcomes.
+
+Where possible, execute the actual read/query logic against a safe synthetic or mocked data source.
+
+Do not merely inspect SQL and declare the scenario verified.
+
+If a database-backed query cannot be safely executed, distinguish:
+
+- Confirmed source behavior.
+- Synthetic execution result.
+- Unverified runtime behavior.
+
+## 5. Investigate the existing startup backfill
+
+Inspect:
+
+`artifacts/api-server/src/legacy-index.ts`
+
+Determine:
+
+- Which NULL-session payments are eligible.
+- Whether the backfill covers only active-session invoices.
+- Whether archived-session linked payments are excluded.
+- Whether it changes existing payment records.
+- Whether it runs automatically during startup.
+- Whether any data integrity or audit risk exists.
+
+Do not execute or modify the backfill.
+
+Do not recommend bulk updates without separately examining financial integrity.
+
+## 6. Investigate the safest possible correction
+
+If the legacy omission is confirmed, propose the smallest READ-ONLY query correction.
+
+Evaluate whether Ledger reads should derive payment session ownership from the linked invoice when a valid invoice relationship exists.
+
+Any proposal must:
+
+- Preserve authenticated school isolation.
+- Preserve exact Academic Session isolation.
+- Avoid exposing orphan payments.
+- Avoid cross-school joins.
+- Avoid silently accepting conflicting non-NULL session IDs.
+- Avoid double-counting payments.
+- Preserve payment/refund amounts.
+- Avoid modifying stored records.
+- Preserve existing business rules.
+
+Compare at least two options:
+
+A. Read-time invoice-session attribution for verified legacy NULL-session payments.
+
+B. Explicit, separately approved data-repair/backfill strategy.
+
+Recommend the safest option, but do not implement either.
+
+## PART B — SCHOOL-WIDE AUDIT LOG ASSESSMENT
+
+## 7. Investigate existing Audit Log behavior
+
+FA-R10A identified that `fee_audit_log.session_id` is nullable.
+
+Global settings events may have NULL session ownership.
+
+The current Fees Audit Log filters by the selected Academic Session, potentially hiding school-global events.
+
+Inspect:
+
+- Audit event schema.
+- Event creation helper.
+- Audit Log API.
+- UI filters.
+- Pagination.
+- Sorting.
+- Event types.
+- Permissions.
+- School isolation.
+- Session filtering.
+- Export functionality, if any.
+
+Determine which event categories are:
+
+- Session-specific.
+- School-global.
+- Ambiguous.
+- Legacy/unclassified.
+
+Do not change existing Audit Log behavior.
+
+## 8. Assess a separate School-Wide Events view
+
+The owner prefers exploring a separate School-Wide Events view while preserving the existing session-specific Audit Log.
+
+Evaluate the following design:
+
+**Existing Session Events**
+
+Displays events explicitly associated with the selected Academic Session.
+
+**Proposed School-Wide Events**
+
+Displays school-global configuration events that do not belong to a specific Academic Session.
+
+Examples may include:
+
+- Fee Structure configuration changes.
+- Notification provider settings.
+- Reminder template changes.
+- External Portal settings.
+- Other global Fees configuration changes.
+
+Do not assume every NULL-session event is genuinely global.
+
+Inspect event types and creation paths to determine whether NULL also represents missing legacy session metadata.
+
+Consider whether a separate All School Events view would be useful, but do not merge session-specific and global events without a clearly defined filter.
+
+## 9. Security and historical integrity
+
+For any proposed School-Wide Events view, verify:
+
+- School ID comes from the authenticated session.
+- Users cannot request another school's events.
+- Permissions remain appropriate.
+- Archived-session financial events are not relabeled as global.
+- Events retain their original timestamps.
+- No audit events are rewritten.
+- Existing session-specific Audit Log behavior remains unchanged.
+- Global configuration events are clearly labeled.
+- Pagination and filtering remain accurate.
+
+All business-facing timestamps should use Asia/Kolkata.
+
+## 10. Produce a proposed UI design
+
+Provide a textual design only.
+
+For example:
+
+Fees & Payments → Audit Log
+
+View selector:
+
+- Selected Session Events
+- School-Wide Configuration Events
+
+Explain:
+
+- Default selection.
+- Relationship to the Academic Session selector.
+- Whether the global view should ignore the selected Academic Session.
+- Whether event types should be filtered.
+- What should happen for events with ambiguous NULL session ownership.
+- Permissions.
+- Empty states.
+- Export behavior, if relevant.
+
+Do not create UI components.
+
+Do not modify APIs.
+
+Do not modify schema.
+
+## PART C — FEE STRUCTURES DECISION CONFIRMATION
+
+## 11. Preserve current Fee Structures architecture
+
+The owner explicitly confirms:
+
+- Fee Structure definitions remain school-global.
+- Fee invoices remain Academic Session-specific.
+- Archived invoices must retain their historical financial amounts.
+- Current structure changes must not rewrite archived invoices.
+- No session-specific fee-plan redesign is requested.
+
+Verify this decision is consistent with the current source architecture.
+
+Report any remaining risk where mutable global configuration could affect historical invoice presentation or calculations.
+
+Do not change Fee Structures.
+
+## PART D — FINAL REPORT
+
+## 12. Required deliverables
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Legacy Ledger verification matrix
+
+| Scenario | Ledger | Analytics | CSV/PDF | Session attribution | School isolation | Evidence |
+
+### C. Exact source locations
+
+List affected files, functions, and line numbers.
+
+### D. Confirmed defects
+
+Separate source-confirmed behavior from actual-data impact, which remains unverified without authorized database reconciliation.
+
+### E. Read-only correction proposal
+
+Explain the smallest safe approach without implementing it.
+
+### F. Startup backfill assessment
+
+Explain what it does and does not cover.
+
+### G. Audit Log event classification
+
+| Event type | Session-specific | School-global | Ambiguous | Evidence |
+
+### H. Proposed School-Wide Events design
+
+Include filters, permissions, and UI behavior.
+
+### I. Fee Structures architecture confirmation
+
+Confirm global structures and session-owned invoices.
+
+### J. Remaining risks and owner decisions
+
+List anything requiring approval.
+
+### K. Safety confirmation
+
+Confirm:
+
+- Application code changed: NO.
+- Database accessed: NO.
+- Database modified: NO.
+- Payment records changed: NO.
+- Refund records changed: NO.
+- Academic Session records changed: NO.
+- Audit Log changed: NO.
+- Fee Structures changed: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restarts: NO.
+
+## 13. Mandatory stop
+
+After the report, STOP.
+
+Do not implement the Ledger correction.
+
+Do not add the School-Wide Events view.
+
+Do not change Fee Structures.
+
+Do not perform database repairs.
+
+Wait for explicit owner approval.
