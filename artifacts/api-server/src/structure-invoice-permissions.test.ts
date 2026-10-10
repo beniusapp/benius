@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InvoiceGenerationError, prepareStructureInvoiceContext } from "./structure-invoice-service";
+import {
+  InvoiceGenerationError,
+  buildInvoiceDuplicateIndex,
+  createStructureInvoice,
+  prepareStructureInvoiceContext,
+} from "./structure-invoice-service";
 import { storage } from "./storage";
 
 test("bulk generation context stays in the caller's school and requires its active session", async (t) => {
@@ -48,4 +53,40 @@ test("bulk generation context stays in the caller's school and requires its acti
   );
   assert.deepEqual(lookups, [[22, 1], [22, 2]]);
   assert.deepEqual(activeSessionLookups, [2]);
+});
+
+test("structure-generated invoices persist their exact source structure ID", async (t) => {
+  const target = storage as any;
+  const hadOwn = Object.prototype.hasOwnProperty.call(target, "createInvoiceFeeRecordIfAbsent");
+  const original = target.createInvoiceFeeRecordIfAbsent;
+  let inserted: any;
+  target.createInvoiceFeeRecordIfAbsent = async ({ data }: any) => {
+    inserted = data;
+    return { created: true, record: { id: 91, ...data } };
+  };
+  t.after(() => {
+    if (hadOwn) target.createInvoiceFeeRecordIfAbsent = original;
+    else delete target.createInvoiceFeeRecordIfAbsent;
+  });
+
+  const context = {
+    schoolId: 4,
+    feeStructureId: 61,
+    structure: {
+      id: 61, schoolId: 4, name: "Tuition", feeType: "Tuition",
+      amount: 1000, frequency: "annual", lateFeeConfig: null,
+    },
+    session: { id: 12, sessionName: "2026–27" },
+    periodStart: "2026-04-01",
+    periodEnd: "2027-03-31",
+    dueDate: "2026-04-30",
+    breakdownSnapshot: [{ name: "Tuition", purpose: "", amount: 1000 }],
+  } as any;
+
+  await createStructureInvoice({
+    context,
+    studentId: 33,
+    duplicateIndex: buildInvoiceDuplicateIndex([]),
+  });
+  assert.equal(inserted.feeStructureId, 61);
 });

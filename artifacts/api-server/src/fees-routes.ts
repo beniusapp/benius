@@ -4,7 +4,7 @@ import { requireStudentFeeSession } from "./student-fee-session-context";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus, academicSessions } from "@workspace/db";
-import { and, eq, sql, desc, or, isNotNull } from "drizzle-orm";
+import { and, eq, sql, desc, or, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod/v4";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -47,6 +47,8 @@ import {
   isStudentEligibleForStructure,
   prepareStructureInvoiceContext,
 } from "./structure-invoice-service";
+import { feeBreakdownTotalError, tieredSlabsError } from "./fee-structure-validation";
+import { buildBreakdownSnapshot } from "./invoice-snapshot";
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import { renderInvoiceDocument } from "./invoice-document";
 import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
@@ -1017,6 +1019,10 @@ export function registerFeesRoutes(app: Express) {
     from_day: z.number().int().min(1),
     to_day:   z.number().int().min(1),
     amount:   z.number().int().min(0),
+  }).superRefine((slab, ctx) => {
+    if (slab.from_day > slab.to_day) {
+      ctx.addIssue({ code: "custom", message: "Each tiered late-fee range must start on or before it ends." });
+    }
   });
 
   const lateFeeConfigSchema = z.object({
@@ -1027,6 +1033,9 @@ export function registerFeesRoutes(app: Express) {
     daily_rate:        z.number().min(0).default(0),
     max_cap:           z.number().int().min(0).default(0),
     tiered_slabs:      z.array(tieredSlabSchema).default([]),
+  }).superRefine((config, ctx) => {
+    const error = tieredSlabsError(config.tiered_slabs);
+    if (error) ctx.addIssue({ code: "custom", message: error, path: ["tiered_slabs"] });
   });
 
   const structureBodySchema = z.object({
@@ -1086,7 +1095,15 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/structures", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const parsed = structureBodySchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (!parsed.success) {
+      res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      return;
+    }
+    const breakdownError = feeBreakdownTotalError(parsed.data.amount, parsed.data.breakdown);
+    if (breakdownError) {
+      res.status(400).json({ message: breakdownError });
+      return;
+    }
     const schoolId = req.session.schoolId!;
     const actor = await resolveFeeAuditActor(req, schoolId);
     const rec = await db.transaction(async tx => {
@@ -1118,9 +1135,15 @@ export function registerFeesRoutes(app: Express) {
   app.patch("/api/admin/fees/structures/:id", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    if (isNaN(id)) {
+      res.status(400).json({ message: "Invalid ID" });
+      return;
+    }
     const parsed = structureBodySchema.partial().safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (!parsed.success) {
+      res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      return;
+    }
     const schoolId = req.session.schoolId!;
 
     const actor = await resolveFeeAuditActor(req, schoolId);
@@ -1130,6 +1153,21 @@ export function registerFeesRoutes(app: Express) {
         eq(feeStructures.schoolId, schoolId),
       ));
       if (!before) return null;
+      const effectiveAmount = Number(parsed.data.amount ?? before.amount);
+      const effectiveBreakdown = parsed.data.breakdown ?? before.breakdown ?? [];
+      const effectiveBreakdownSchema = z.array(breakdownItemSchema).safeParse(effectiveBreakdown);
+      if (!effectiveBreakdownSchema.success) {
+        return { validationError: "Stored fee breakdown is invalid; correct it before saving this structure." };
+      }
+      const breakdownError = feeBreakdownTotalError(effectiveAmount, effectiveBreakdownSchema.data);
+      if (breakdownError) return { validationError: breakdownError };
+      const effectiveLateFeeConfig = parsed.data.lateFeeConfig ?? before.lateFeeConfig;
+      if (effectiveLateFeeConfig != null) {
+        const lateFeeValidation = lateFeeConfigSchema.safeParse(effectiveLateFeeConfig);
+        if (!lateFeeValidation.success) {
+          return { validationError: lateFeeValidation.error.issues.map(issue => issue.message).join(", ") };
+        }
+      }
       const updated = await storage.updateFeeStructure(id, schoolId, parsed.data, tx);
       if (!updated) return null;
       const [activeSession] = await tx.select({ id: academicSessions.id })
@@ -1146,22 +1184,40 @@ export function registerFeesRoutes(app: Express) {
       const dueDayChanged = parsed.data.dueDayOfMonth !== undefined
         && parsed.data.dueDayOfMonth !== null
         && parsed.data.dueDayOfMonth !== before.dueDayOfMonth;
+      const potentiallyMatchingUnlinked = activeSessionId == null ? [] : await tx.select({
+        id: feeRecords.id,
+      }).from(feeRecords).where(and(
+        eq(feeRecords.schoolId, schoolId),
+        eq(feeRecords.sessionId, activeSessionId),
+        isNull(feeRecords.feeStructureId),
+        or(
+          eq(feeRecords.feeType, before.feeType),
+          eq(feeRecords.feeType, updated.feeType),
+        ),
+        or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+      ));
       let syncedCount = 0;
       if (activeSessionId != null && (amountChanged || feeTypeChanged)) {
         const patch: Record<string, unknown> = {};
-        if (amountChanged) patch.amount = parsed.data.amount;
+        if (amountChanged) {
+          patch.amount = parsed.data.amount;
+          patch.breakdownSnapshot = buildBreakdownSnapshot(updated.breakdown);
+        }
         if (feeTypeChanged) patch.feeType = parsed.data.feeType;
         const synced = await tx.update(feeRecords).set(patch as any).where(and(
           eq(feeRecords.schoolId, schoolId),
           eq(feeRecords.sessionId, activeSessionId),
-          eq(feeRecords.feeType, before.feeType),
+          eq(feeRecords.feeStructureId, id),
           or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+          sql`NOT EXISTS (
+            SELECT 1 FROM payment_records fee_structure_payment
+            WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
+          )`,
         )).returning({ id: feeRecords.id });
         syncedCount = synced.length;
       }
       if (activeSessionId != null && dueDayChanged) {
         const newDay = parsed.data.dueDayOfMonth!;
-        const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
         const dueDateResult = await tx.execute(sql`
           UPDATE fee_records
           SET due_date = MAKE_DATE(
@@ -1174,8 +1230,12 @@ export function registerFeesRoutes(app: Express) {
           )
           WHERE school_id = ${schoolId}
             AND session_id = ${activeSessionId}
-            AND fee_type = ${matchFeeType}
+            AND fee_structure_id = ${id}
             AND status IN ('Due', 'Overdue')
+            AND NOT EXISTS (
+              SELECT 1 FROM payment_records fee_structure_payment
+              WHERE fee_structure_payment.fee_record_id = fee_records.id
+            )
           RETURNING id
         `);
         if (!amountChanged && !feeTypeChanged) syncedCount = dueDateResult.rows.length;
@@ -1183,8 +1243,8 @@ export function registerFeesRoutes(app: Express) {
 
       let voidedCount = 0;
       const newClasses: string[] | undefined = parsed.data.applicableClasses;
+      const unlinkedCandidateIds = new Set(potentiallyMatchingUnlinked.map(record => record.id));
       if (activeSessionId != null && newClasses !== undefined && newClasses.length > 0) {
-        const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
         const unpaidRecs = await tx.select({
           id: feeRecords.id,
           studentId: feeRecords.studentId,
@@ -1196,8 +1256,12 @@ export function registerFeesRoutes(app: Express) {
           .from(feeRecords).where(and(
             eq(feeRecords.schoolId, schoolId),
             eq(feeRecords.sessionId, activeSessionId),
-            eq(feeRecords.feeType, matchFeeType),
+            eq(feeRecords.feeStructureId, id),
             or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+            sql`NOT EXISTS (
+              SELECT 1 FROM payment_records fee_structure_payment
+              WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
+            )`,
           ));
         if (unpaidRecs.length > 0) {
           const schoolStudents = await tx.select({ id: students.id, class: students.class, name: students.name })
@@ -1214,8 +1278,13 @@ export function registerFeesRoutes(app: Express) {
             const removed = await tx.delete(feeRecords).where(and(
               eq(feeRecords.schoolId, schoolId),
               eq(feeRecords.sessionId, activeSessionId),
+              eq(feeRecords.feeStructureId, id),
               sql`id = ANY(${sql.raw(`ARRAY[${toVoidIds.join(",")}]`)})`,
               or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+              sql`NOT EXISTS (
+                SELECT 1 FROM payment_records fee_structure_payment
+                WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
+              )`,
             )).returning({ id: feeRecords.id });
             voidedCount = removed.length;
             const removedIds = new Set(removed.map(record => record.id));
@@ -1265,9 +1334,22 @@ export function registerFeesRoutes(app: Express) {
         description: `Updated fee structure "${updated.name}"${changes ? `: ${changes}` : ""}${impact ? `. ${impact}` : ""}.`,
         ipAddress: requestIpAddress(req),
       }, tx);
-      return { updated, syncedCount, voidedCount, changes: impact ? impact.split("; ") : [] };
+      return {
+        updated,
+        syncedCount,
+        voidedCount,
+        unlinkedInvoicesSkipped: unlinkedCandidateIds.size,
+        changes: impact ? impact.split("; ") : [],
+      };
     });
-    if (!result) return res.status(404).json({ message: "Fee structure not found" });
+    if (!result) {
+      res.status(404).json({ message: "Fee structure not found" });
+      return;
+    }
+    if ("validationError" in result) {
+      res.status(400).json({ message: result.validationError });
+      return;
+    }
 
     // Re-run late fee calculation for this school after any structure change
     recalculateLateFees(schoolId).catch(() => {/* non-critical */});
@@ -1276,6 +1358,7 @@ export function registerFeesRoutes(app: Express) {
       ...result.updated,
       syncedInvoices: result.syncedCount,
       voidedInvoices: result.voidedCount,
+      unlinkedInvoicesSkipped: result.unlinkedInvoicesSkipped,
       syncedFields: result.changes,
     });
   });
@@ -4235,10 +4318,17 @@ export function registerFeesRoutes(app: Express) {
     // Void out-of-scope Due/Overdue records — students who were previously invoiced
     // but are no longer in applicableClasses (e.g. structure classes narrowed after invoice).
     let voided = 0;
+    let unlinkedInvoicesSkipped = 0;
     if (applicableClasses.length > 0) {
       const eligibleStudentIds = new Set(filtered.map(e => e.studentId));
-      const outOfScopeRecs = existingRecords.filter(r =>
+      unlinkedInvoicesSkipped = existingRecords.filter(r =>
+        r.feeStructureId == null &&
         r.feeType === structure.feeType &&
+        (r.status === "Due" || r.status === "Overdue") &&
+        !eligibleStudentIds.has(r.studentId)
+      ).length;
+      const outOfScopeRecs = existingRecords.filter(r =>
+        r.feeStructureId === structureId &&
         (r.status === "Due" || r.status === "Overdue") &&
         !eligibleStudentIds.has(r.studentId)
       );
@@ -4248,8 +4338,14 @@ export function registerFeesRoutes(app: Express) {
           const removed = await tx.delete(feeRecords)
             .where(and(
               eq(feeRecords.schoolId, schoolId),
+              eq(feeRecords.sessionId, sessionId),
+              eq(feeRecords.feeStructureId, structureId),
               sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
               or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+              sql`NOT EXISTS (
+                SELECT 1 FROM payment_records fee_structure_payment
+                WHERE fee_structure_payment.fee_record_id = fee_records.id
+              )`,
             ))
             .returning({ id: feeRecords.id });
           if (removed.length > 0) {
@@ -4282,7 +4378,7 @@ export function registerFeesRoutes(app: Express) {
       .set({ lastInvoicesGeneratedAt: new Date() })
       .where(eq(feeStructures.id, structureId));
 
-    res.json({ created, synced: 0, skipped, voided, total: filtered.length });
+    res.json({ created, synced: 0, skipped, voided, unlinkedInvoicesSkipped, total: filtered.length });
   });
 
   // ── Receipt Number Preview (no-commit peek) ───────────────────────────────

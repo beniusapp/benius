@@ -4424,12 +4424,17 @@ function StructuresTab({ isArchiveMode, canGenerateInvoices }: { isArchiveMode: 
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       const synced = data?.syncedInvoices ?? 0;
+      const unlinkedSkipped = data?.unlinkedInvoicesSkipped ?? 0;
       const fields: string[] = data?.syncedFields ?? [];
+      const successDetails = [
+        synced > 0 ? `${synced} eligible unpaid invoice${synced !== 1 ? "s" : ""} updated — ${fields.join(", ")}` : null,
+        unlinkedSkipped > 0
+          ? `${unlinkedSkipped} potentially matching legacy invoice${unlinkedSkipped !== 1 ? "s" : ""} skipped because structure ownership is unknown`
+          : null,
+      ].filter(Boolean);
       toast({
         title: editing ? "Structure updated" : "Structure created",
-        description: synced > 0
-          ? `✅ ${synced} unpaid invoice${synced !== 1 ? "s" : ""} updated — ${fields.join(", ")}`
-          : undefined,
+        description: successDetails.length ? successDetails.join(". ") : undefined,
       });
       setShowModal(false);
     },
@@ -4477,9 +4482,23 @@ function StructuresTab({ isArchiveMode, canGenerateInvoices }: { isArchiveMode: 
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
-      return r.json() as Promise<{ created: number; synced: number; skipped: number; voided: number; total: number }>;
+      return r.json() as Promise<{
+        created: number;
+        synced: number;
+        skipped: number;
+        voided: number;
+        unlinkedInvoicesSkipped?: number;
+        total: number;
+      }>;
     },
-    onSuccess: (data: { created: number; synced: number; skipped: number; voided: number; total: number }) => {
+    onSuccess: (data: {
+      created: number;
+      synced: number;
+      skipped: number;
+      voided: number;
+      unlinkedInvoicesSkipped?: number;
+      total: number;
+    }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
@@ -4490,6 +4509,9 @@ function StructuresTab({ isArchiveMode, canGenerateInvoices }: { isArchiveMode: 
       if ((data.synced ?? 0) > 0) parts.push(`${data.synced} synced`);
       if (data.skipped > 0) parts.push(`${data.skipped} unchanged`);
       if ((data.voided ?? 0) > 0) parts.push(`${data.voided} out-of-scope removed`);
+      if ((data.unlinkedInvoicesSkipped ?? 0) > 0) {
+        parts.push(`${data.unlinkedInvoicesSkipped} potentially matching legacy invoices skipped (ownership unknown)`);
+      }
       const totalStr = (data.total ?? 0) > 0 ? ` · ${data.total} eligible students` : "";
       toast({ title: "✅ Invoices generated", description: (parts.join(" · ") || "No changes") + totalStr });
       setGenResult(data);

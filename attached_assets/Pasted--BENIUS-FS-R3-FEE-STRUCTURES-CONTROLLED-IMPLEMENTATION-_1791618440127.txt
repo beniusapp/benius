@@ -1,0 +1,291 @@
+# BENIUS — FS-R3
+## FEE STRUCTURES — CONTROLLED IMPLEMENTATION
+### OWNER-APPROVED DESIGN | NO DATABASE MIGRATION EXECUTION
+
+BENIUS is a multi-tenant School Management Information System currently in development.
+
+We have completed:
+- FS-R1: Fee Structures audit.
+- FS-R2: Safe correction feasibility review.
+
+The owner APPROVES implementation of the four confirmed Fee Structures corrections under the restrictions below.
+
+This is an implementation task, NOT another broad audit.
+
+## 1. Approved changes
+
+Implement only:
+
+1. Exact Fee Structure → Invoice ownership tracking.
+2. Backend validation of Fee Structure amount versus component breakdown.
+3. Atomic synchronization of eligible invoice amount and breakdown snapshot.
+4. Backend validation of tiered late-fee ranges.
+
+Do not modify financial formulas or unrelated modules.
+
+## 2. Exact invoice ownership
+
+Add a nullable `feeStructureId` column to `fee_records`, using the repository's naming conventions.
+
+Requirements:
+
+- Newly generated structure-based invoices must save the exact originating Fee Structure ID.
+- Existing invoices must retain NULL in this field.
+- Do not infer ownership from fee type, class, amount, name or snapshots.
+- Do not backfill legacy invoices.
+- Do not automatically link manually created invoices.
+- Do not change the source ID when a Fee Structure is edited.
+- Treat the source ID as immutable after invoice creation.
+
+Use the exact source ID for subsequent structure-driven synchronization and class-narrowing deletion.
+
+Always include authenticated school ID and the school's active Academic Session ID in invoice selection and mutation predicates.
+
+Do not rely on `feeType` alone to identify invoice ownership.
+
+## 3. Existing invoices and legacy compatibility
+
+Existing invoices without `feeStructureId` must remain readable and financially unchanged.
+
+When a Fee Structure edit would previously have targeted unlinked invoices:
+
+- Do not update or delete those invoices.
+- Do not guess their originating structure.
+- Report the number of unlinked invoices skipped when that number can be determined safely.
+- Clearly label skipped counts as potentially matching legacy invoices, not proven ownership.
+- Do not expose another school's data.
+- Preserve existing API response compatibility wherever possible.
+
+Do not introduce a new background reconciliation process.
+
+## 4. Paid and partially paid invoice protection
+
+An invoice must NEVER be automatically synchronized or deleted by a Fee Structure edit if it has any payment history.
+
+This includes:
+
+- Fully paid invoices.
+- Partially paid invoices.
+- Legacy invoices whose status remains Due or Overdue despite payment history.
+- Invoices with refunded, reversed or otherwise recorded payment activity.
+
+Use an explicit payment-history exclusion in the database mutation predicate, not only a preliminary application-level check.
+
+Retain existing eligible-status restrictions.
+
+If the invoice has no payment history but is in an archived Academic Session, it must still be excluded.
+
+All mutations must be limited to the authenticated school and active Academic Session.
+
+## 5. Fee Structure deletion behavior
+
+Deleting a Fee Structure must:
+
+- Delete only the Fee Structure definition, subject to existing authorization rules.
+- Never cascade-delete invoices.
+- Never delete payment or refund history.
+- Preserve existing invoices' `feeStructureId` values as historical source references.
+- Not trigger invoice synchronization or cleanup.
+
+Choose a database relationship design compatible with retaining historical source IDs after the original Fee Structure has been deleted.
+
+Do not create a foreign-key cascade, SET NULL behavior, or another mechanism that destroys historical attribution.
+
+If the current schema/migration conventions cannot safely support this design, STOP and explain the blocker rather than improvising.
+
+## 6. Correct synchronization behavior
+
+For an authorized Fee Structure edit:
+
+- Resolve the exact structure using its ID and authenticated school.
+- Resolve the school's active Academic Session.
+- Target only invoices linked to that exact structure.
+- Keep existing Due/Overdue eligibility rules.
+- Exclude invoices with any payment history.
+- Exclude archived-session invoices.
+- Exclude other schools.
+- Exclude invoices linked to another Fee Structure.
+- Exclude unlinked legacy invoices.
+
+For class narrowing, apply the same protections before deletion.
+
+Do not delete invoices merely because they share the same fee type.
+
+Keep existing approved behavior for eligible active-session unpaid invoices.
+
+Ensure authorization and selection remain correct even if concurrent operations occur.
+
+## 7. Breakdown validation
+
+Enforce backend validation so that the sum of all fee breakdown components equals the authoritative Fee Structure amount.
+
+Apply validation to:
+
+- Fee Structure creation.
+- Fee Structure PATCH using the effective merged state of stored and submitted values.
+- Structure-based invoice generation.
+
+Use integer arithmetic and existing currency conventions.
+
+Reject invalid requests with an appropriate validation response.
+
+Do not silently adjust totals or components.
+
+Do not rewrite previously generated invoices.
+
+If a Fee Structure has no breakdown, preserve the existing supported behavior unless it violates an established product rule.
+
+## 8. Atomic amount and snapshot synchronization
+
+When an eligible active-session invoice is legitimately synchronized:
+
+- Update its amount and corresponding validated breakdown snapshot together in one atomic database operation.
+- Keep invoice total and component breakdown consistent.
+- Do not change financial formulas.
+- Do not recalculate or rewrite payment/refund records.
+- Do not modify paid, partially paid, archived or unlinked invoices.
+
+Preserve unrelated historical snapshot fields unless the existing authorized synchronization explicitly requires them.
+
+If the update cannot safely preserve consistency, reject or skip it rather than applying a partial change.
+
+## 9. Tiered late-fee validation
+
+Reject configurations with:
+
+- `from_day > to_day`.
+- Overlapping ranges.
+- Invalid day boundaries.
+- Other malformed tier values already prohibited by existing validation rules.
+
+Allow valid adjacent non-overlapping ranges.
+
+Preserve the existing late-fee calculation algorithm.
+
+Do not automatically repair existing configurations or recalculate historical late fees.
+
+Apply validation consistently on creation and effective merged PATCH state.
+
+## 10. Schema and migration preparation
+
+A nullable source-ID column is approved.
+
+You may:
+
+- Update the application schema.
+- Create a new additive SQL migration file.
+- Determine the correct migration directory/process using existing repository conventions.
+- Run non-mutating schema/build checks.
+
+You must NOT:
+
+- Execute the migration.
+- Run `drizzle-kit push`, `db:push`, or equivalent.
+- Access a live financial database.
+- Create or reset databases.
+- Run data backfills.
+- Modify existing financial records.
+- Start background synchronization.
+- Deploy the application.
+
+The repository's active migration output path was previously unclear.
+
+Do not treat `.migration-backup/migrations` as the active migration directory without evidence.
+
+If a reliable migration process cannot be established, prepare the schema/code changes separately, clearly mark deployment BLOCKED, and report the exact migration uncertainty.
+
+Do not claim the feature is runtime-ready until the database schema has been applied through an approved process.
+
+## 11. Focused tests
+
+Create or update only the necessary focused tests.
+
+Required scenarios:
+
+1. Two structures with the same fee type: editing A never changes invoices linked to B.
+2. Class narrowing for A never deletes invoices linked to B.
+3. Unlinked legacy invoices remain unchanged.
+4. Cross-school invoices are excluded.
+5. Archived-session invoices are excluded.
+6. Paid invoices are excluded.
+7. Any invoice with payment history is excluded, including legacy partially paid Due/Overdue rows.
+8. New generated invoices save the correct structure ID.
+9. Deleting a structure preserves existing invoices and their source IDs.
+10. Invalid component totals are rejected by create, merged PATCH and generation.
+11. Valid synchronization updates invoice amount and breakdown snapshot together.
+12. Invalid or overlapping late-fee ranges are rejected; valid ranges remain accepted.
+13. Existing late-fee calculation behavior remains unchanged.
+
+Use synthetic/mocked data.
+
+Run relevant existing tests and builds.
+
+If full SQL execution is unavailable without database setup, clearly disclose that limitation.
+
+Do not claim tests prove actual database behavior unless they execute against a suitable SQL database.
+
+## 12. Scope restrictions
+
+Do not modify:
+
+- Financial Analytics.
+- Ledger & Transactions.
+- Reminders.
+- External Portal.
+- Audit Log.
+- Mobile application or APIs.
+- Payment/refund processing logic.
+- Academic Session management.
+- Student enrollment management.
+- Financial formulas.
+- Existing invoice/payment/refund data.
+
+Do not implement additional features or redesign the Fee Structures UI.
+
+If a necessary shared file is touched, keep the change strictly limited to the approved Fee Structures behavior.
+
+## 13. Required implementation report
+
+Return a concise report:
+
+### A. Implementation status
+COMPLETE / PARTIAL / BLOCKED.
+
+### B. Changes made
+List exact files and what changed.
+
+### C. Invoice ownership safety
+Explain how same-type structures, legacy invoices, payment history and archived sessions are protected.
+
+### D. Validation corrections
+Confirm the three validation/snapshot corrections.
+
+### E. Tests
+Show pass/fail counts and evidence level.
+
+### F. Migration status
+State:
+- Migration file created: YES/NO.
+- Migration executed: NO.
+- Migration process confirmed: YES/NO.
+- Runtime database compatibility verified: YES/NO.
+
+### G. Remaining blockers
+Only actual blockers, not speculative future improvements.
+
+### H. Safety confirmation
+Confirm no real financial data, payment/refund records, formulas or archived invoices were modified.
+
+## 14. Mandatory stop
+
+After implementing the approved code and running safe tests, STOP.
+
+Do not execute database migrations.
+
+Do not deploy.
+
+Do not restart workflows.
+
+Do not propose another broad audit.
+
+Wait for the owner's next instruction.

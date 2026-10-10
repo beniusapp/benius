@@ -1,6 +1,7 @@
 import { storage } from "./storage";
-import { buildBreakdownSnapshot, warnOnSumMismatch, type BreakdownComponent } from "./invoice-snapshot";
+import { buildBreakdownSnapshot, type BreakdownComponent } from "./invoice-snapshot";
 import type { LateFeeConfig } from "@workspace/db";
+import { feeBreakdownTotalError } from "./fee-structure-validation";
 
 type ActiveSession = NonNullable<Awaited<ReturnType<typeof storage.getActiveSession>>>;
 type Structure = NonNullable<Awaited<ReturnType<typeof storage.getFeeStructureById>>>;
@@ -15,6 +16,7 @@ export class InvoiceGenerationError extends Error {
 
 export interface StructureInvoiceContext {
   schoolId: number;
+  feeStructureId: number;
   structure: Structure;
   session: ActiveSession;
   periodStart: string;
@@ -25,6 +27,7 @@ export interface StructureInvoiceContext {
 
 interface InvoiceCreationContext {
   schoolId: number;
+  feeStructureId?: number | null;
   session: ActiveSession;
   feeName: string;
   feeType: string;
@@ -281,13 +284,16 @@ export async function prepareStructureInvoiceContext(input: {
   let breakdownSnapshot: BreakdownComponent[];
   try {
     breakdownSnapshot = buildBreakdownSnapshot(structure.breakdown);
-    warnOnSumMismatch(breakdownSnapshot, structure.amount, `structure "${structure.name}"`);
+    const mismatch = feeBreakdownTotalError(Number(structure.amount), breakdownSnapshot);
+    if (mismatch) throw new InvoiceGenerationError(mismatch);
   } catch (error: any) {
+    if (error instanceof InvoiceGenerationError) throw error;
     throw new InvoiceGenerationError(`Invalid fee component breakdown: ${error.message}`);
   }
 
   return {
     schoolId: input.schoolId,
+    feeStructureId: structure.id,
     structure,
     session,
     periodStart,
@@ -383,6 +389,7 @@ async function createInvoiceFromContext(input: {
       schoolId: input.context.schoolId,
       studentId: input.studentId,
       sessionId: input.context.session.id,
+      feeStructureId: input.context.feeStructureId ?? null,
       feeName: input.context.feeName,
       feeType: input.context.feeType,
       amount: input.context.amount,
@@ -427,6 +434,7 @@ export async function createStructureInvoice(input: {
     ...input,
     context: {
       schoolId: input.context.schoolId,
+      feeStructureId: input.context.feeStructureId,
       session: input.context.session,
       feeName: input.context.structure.name,
       feeType: input.context.structure.feeType,

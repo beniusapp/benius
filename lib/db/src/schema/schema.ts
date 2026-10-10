@@ -829,6 +829,10 @@ export const feeRecords = pgTable("fee_records", {
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  // Immutable originating structure ID. Intentionally not an FK: deleting a
+  // school-global definition must not erase historical invoice attribution.
+  // Legacy and manually created invoices remain NULL.
+  feeStructureId: integer("fee_structure_id"),
   feeType: varchar("fee_type", { length: 100 }).notNull(),
   amount: integer("amount").notNull(),
   dueDate: date("due_date").notNull(),
