@@ -1,0 +1,61 @@
+BENIUS — ACADEMIC SESSION PAGE 3 COPY CONFIGURATION BUTTON AUDIT
+
+MODE: STRICT READ-ONLY INVESTIGATION. NO CHANGES.
+
+LOCATION:
+Admin Portal → School Setup → Academic Sessions → New Session → Page 3 (Summary)
+
+CURRENT STATUS:
+The simplified three-page wizard is implemented, and I have manually tested the UI successfully.
+
+QUESTION:
+Is the "Copy Configuration" button on Page 3 actually necessary for the Principal?
+
+I am considering hiding ONLY this button to make Page 3 simpler.
+
+INVESTIGATE:
+
+1. What exactly happens when the Principal clicks "Copy Configuration"?
+
+2. Is this the only way the Principal can access the Configuration Copy Center for a newly created Academic Session?
+
+3. Can the Principal access the Configuration Copy Center later from the Academic Sessions page or another existing UI?
+
+4. If we hide the button, will any functionality become inaccessible?
+
+5. Does selecting "Copy configuration from previous academic session" on Page 1 automatically copy any settings, or does the Principal still need to initiate copying separately?
+
+6. If the button is hidden, will the Principal lose the ability to copy school configurations, including classes, subjects, policies, or other eligible modules?
+
+7. Will hiding the button affect:
+   - Academic Session creation?
+   - Student Promotion Wizard?
+   - Source and target session associations?
+   - Existing Academic Session data?
+   - School/tenant isolation?
+   - Archived-session protections?
+
+8. Can we safely hide the button on Page 3 while preserving an accessible, understandable configuration-copy workflow elsewhere?
+
+IMPORTANT:
+Distinguish between hiding a button and removing the underlying configuration-copy functionality.
+
+REPORT:
+
+- Is the button technically required for session creation? YES/NO
+- Is the button required for configuration copying to remain accessible? YES/NO
+- Are there alternative existing UI entry points? Give exact locations.
+- What happens if the button is hidden?
+- Safest recommendation: KEEP / HIDE / MOVE TO ANOTHER LOCATION
+- Exact supporting files and code references.
+
+STRICT SAFETY:
+- Do not modify any code.
+- Do not modify the database.
+- Do not execute configuration copying.
+- Do not create or activate sessions.
+- Do not restart workflows.
+- No Production or Mobile changes.
+- No deployment.
+
+STOP AFTER THE READ-ONLY AUDIT AND WAIT FOR MY APPROVAL.
