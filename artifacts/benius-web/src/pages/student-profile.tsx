@@ -13,6 +13,7 @@ import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { officialRollNumberDisplayValue } from "@/lib/official-roll-number-display";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
+import { exceedsStudentUploadLimit, STUDENT_PROFILE_PHOTO_MAX_BYTES } from "@/lib/student-field-limits";
 
 interface StudentMeResponse {
   id: number;
@@ -413,10 +414,10 @@ export default function StudentProfile() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1 * 1024 * 1024) {
+    if (exceedsStudentUploadLimit(file, STUDENT_PROFILE_PHOTO_MAX_BYTES)) {
       toast({
         title: "Image too large",
-        description: "Please upload an image smaller than 1 MB.",
+        description: "Please upload an image no larger than 5 MB.",
         variant: "destructive",
       });
       e.target.value = "";
@@ -879,6 +880,7 @@ export default function StudentProfile() {
                   accept="image/*"
                   className="hidden"
                   onChange={handleFileChange}
+                  data-max-bytes={STUDENT_PROFILE_PHOTO_MAX_BYTES}
                   data-testid="input-photo-file"
                 />
                 <div className="relative group">
@@ -929,7 +931,7 @@ export default function StudentProfile() {
                     {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
                     {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
                   </button>
-                  <p className="text-[10px] text-slate-400">Max size: 1 MB</p>
+                  <p className="text-[10px] text-slate-400">Max size: 5 MB</p>
                 </div>
               </div>
 

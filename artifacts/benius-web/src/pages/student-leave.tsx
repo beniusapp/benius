@@ -11,7 +11,7 @@ import { getQueryFn, sessionFetchForViewSession, queryClient } from "@/lib/query
 import { studentLeaveQueryKey } from "@/lib/student-leave-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
-import { countStudentWords, exceedsStudentUploadLimit, exceedsStudentWordLimit, STUDENT_FIELD_MAX_WORDS, STUDENT_UPLOAD_MAX_BYTES } from "@/lib/student-field-limits";
+import { countStudentWords, exceedsStudentUploadLimit, exceedsStudentWordLimit, STUDENT_FIELD_MAX_WORDS, STUDENT_LEAVE_ATTACHMENT_MAX_BYTES } from "@/lib/student-field-limits";
 
 interface StudentMe {
   id: number;
@@ -73,10 +73,10 @@ export default function StudentLeave() {
   const reasonWordsExceeded = exceedsStudentWordLimit(reason);
 
   function handleAttachmentSelect(file: File | null, input?: HTMLInputElement) {
-    if (file && exceedsStudentUploadLimit(file)) {
+    if (file && exceedsStudentUploadLimit(file, STUDENT_LEAVE_ATTACHMENT_MAX_BYTES)) {
       setAttachmentFile(null);
       if (input) input.value = "";
-      toast({ title: "File too large", description: "Leave attachments must be 1 MB or smaller.", variant: "destructive" });
+      toast({ title: "File too large", description: "Leave attachments must be 5 MB or smaller.", variant: "destructive" });
       return;
     }
     setAttachmentFile(file);
@@ -494,13 +494,13 @@ export default function StudentLeave() {
                   >
                     <Upload className="w-6 h-6 text-gray-400" />
                     <span className="text-sm font-medium text-gray-600">Click to upload image or document</span>
-                    <span className="text-xs text-gray-400">JPG, PNG, PDF, DOC (Max 1 MB)</span>
+                    <span className="text-xs text-gray-400">JPG, PNG, PDF, DOC (Max 5 MB)</span>
                     <input
                       type="file"
                       accept="image/*,.pdf,.doc,.docx"
                       className="hidden"
                       onChange={e => handleAttachmentSelect(e.target.files?.[0] ?? null, e.currentTarget)}
-                      data-max-bytes={STUDENT_UPLOAD_MAX_BYTES}
+                      data-max-bytes={STUDENT_LEAVE_ATTACHMENT_MAX_BYTES}
                       data-testid="input-leave-attachment"
                     />
                   </label>

@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { useIstDateSelection } from "@/hooks/use-ist-date-selection";
 import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
-import { exceedsStudentUploadLimit, STUDENT_UPLOAD_MAX_BYTES } from "@/lib/student-field-limits";
+import { exceedsStudentUploadLimit, STUDENT_HOMEWORK_UPLOAD_MAX_BYTES } from "@/lib/student-field-limits";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentMeResponse {
@@ -299,19 +299,19 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
     setDragging(false);
     const file = e.dataTransfer.files[0];
     if (!file) return;
-    if (exceedsStudentUploadLimit(file)) {
+    if (exceedsStudentUploadLimit(file, STUDENT_HOMEWORK_UPLOAD_MAX_BYTES)) {
       setSelectedFile(null);
-      toast({ title: "File too large", description: "Homework files must be 1 MB or smaller.", variant: "destructive" });
+      toast({ title: "File too large", description: "Homework files must be 2 MB or smaller.", variant: "destructive" });
       return;
     }
     setSelectedFile(file);
   }
 
   function handleFileSelect(file: File | null) {
-    if (file && exceedsStudentUploadLimit(file)) {
+    if (file && exceedsStudentUploadLimit(file, STUDENT_HOMEWORK_UPLOAD_MAX_BYTES)) {
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      toast({ title: "File too large", description: "Homework files must be 1 MB or smaller.", variant: "destructive" });
+      toast({ title: "File too large", description: "Homework files must be 2 MB or smaller.", variant: "destructive" });
       return;
     }
     setSelectedFile(file);
@@ -501,7 +501,7 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
                     type="file"
                     className="hidden"
                     onChange={e => handleFileSelect(e.target.files?.[0] ?? null)}
-                    data-max-bytes={STUDENT_UPLOAD_MAX_BYTES}
+                    data-max-bytes={STUDENT_HOMEWORK_UPLOAD_MAX_BYTES}
                     data-testid="input-file-upload"
                   />
                   <Upload className="w-7 h-7 text-slate-400" />
@@ -513,7 +513,7 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
                   ) : (
                     <div className="text-center">
                       <p className="text-sm text-slate-600 font-medium">Tap to select file</p>
-                      <p className="text-xs text-slate-400 mt-0.5">PDF, image, doc · Max 1 MB</p>
+                      <p className="text-xs text-slate-400 mt-0.5">PDF, image, doc · Max 2 MB</p>
                     </div>
                   )}
                 </div>

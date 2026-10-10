@@ -1,5 +1,7 @@
 export const STUDENT_FIELD_MAX_WORDS = 500;
-export const STUDENT_UPLOAD_MAX_BYTES = 1_048_576;
+export const STUDENT_PROFILE_PHOTO_MAX_BYTES = 5_242_880;
+export const STUDENT_HOMEWORK_UPLOAD_MAX_BYTES = 2_097_152;
+export const STUDENT_LEAVE_ATTACHMENT_MAX_BYTES = 5_242_880;
 
 export function countStudentWords(value: string): number {
   const trimmed = value.trim();
@@ -10,6 +12,6 @@ export function exceedsStudentWordLimit(value: string): boolean {
   return countStudentWords(value) > STUDENT_FIELD_MAX_WORDS;
 }
 
-export function exceedsStudentUploadLimit(file: File): boolean {
-  return file.size > STUDENT_UPLOAD_MAX_BYTES;
+export function exceedsStudentUploadLimit(file: File, maxBytes: number): boolean {
+  return file.size > maxBytes;
 }

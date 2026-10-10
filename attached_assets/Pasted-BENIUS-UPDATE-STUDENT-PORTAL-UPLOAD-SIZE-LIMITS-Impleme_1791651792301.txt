@@ -1,0 +1,58 @@
+BENIUS — UPDATE STUDENT PORTAL UPLOAD SIZE LIMITS
+
+Implement these three changes in the existing BENIUS Student Portal.
+
+1. STUDENT PROFILE — /student-profile
+
+Upload Photo:
+- Change maximum file size from 1 MB to 5 MB.
+- Update the displayed label to "Max size: 5 MB".
+- Reject files larger than 5 MB with a clear error.
+- Preserve existing image formats, photo verification workflow, submission attempts, and approval logic.
+
+2. HOMEWORK — /student/homework
+
+Upload File:
+- Change maximum file size from 1 MB to 2 MB.
+- Update the displayed label to "Max 2 MB".
+- Reject files larger than 2 MB.
+- Preserve supported file formats, written answers, and homework submission behavior.
+
+3. LEAVE APPLICATION — /student/leave
+
+Attachment:
+- Change maximum file size from 1 MB to 5 MB.
+- Update the displayed label to "Max 5 MB".
+- Reject files larger than 5 MB.
+- Preserve supported file formats and leave application functionality.
+
+VALIDATION:
+- 1 MB = 1,048,576 bytes.
+- Profile photo: 5,242,880 bytes maximum.
+- Homework attachment: 2,097,152 bytes maximum.
+- Leave attachment: 5,242,880 bytes maximum.
+- Validate limits on both frontend and backend.
+- Reject oversized files submitted directly through the API.
+- Ensure the displayed limits match backend validation.
+- Preserve all existing 500-word limits and counters.
+
+SAFETY:
+- Change only the three specified upload limits.
+- Preserve school/tenant and Academic Session isolation.
+- Do not modify existing records.
+- No database schema changes or migrations.
+- No Production or Mobile changes.
+- No deployment or service restart without approval.
+- Do not change unrelated modules.
+
+TESTING:
+- Test files exactly at the maximum permitted size.
+- Test files one byte above the maximum.
+- Confirm valid files can still be submitted.
+- Run focused tests and API/Web builds.
+
+Implement directly without another broad audit.
+
+Report files changed, tests passed, and whether a Development API restart is required.
+
+STOP after code implementation and testing.

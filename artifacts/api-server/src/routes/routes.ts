@@ -79,7 +79,9 @@ import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
 import {
   exceedsStudentWordLimit,
-  STUDENT_UPLOAD_MAX_BYTES,
+  STUDENT_PROFILE_PHOTO_MAX_BYTES,
+  STUDENT_HOMEWORK_UPLOAD_MAX_BYTES,
+  STUDENT_LEAVE_ATTACHMENT_MAX_BYTES,
 } from "../student-field-limits";
 import {
   getStudentComplaintReadIds,
@@ -1964,7 +1966,7 @@ export async function registerRoutes(
         cb(null, unique + ext);
       },
     }),
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: STUDENT_PROFILE_PHOTO_MAX_BYTES },
     fileFilter: (_req, file, cb) => {
       if (file.mimetype.startsWith("image/")) cb(null, true);
       else cb(new Error("Only image files are allowed"));
@@ -2126,7 +2128,18 @@ export async function registerRoutes(
       }
       next();
     },
-    profileDiskUpload.single("photo"),
+    (req, res, next) => {
+      profileDiskUpload.single("photo")(req, res, (error) => {
+        if (error) {
+          const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
+          res.status(tooLarge ? 413 : 400).json({
+            message: tooLarge ? "Profile photo must be 5 MB or smaller." : error.message || "Photo upload failed",
+          });
+          return;
+        }
+        next();
+      });
+    },
     async (req, res) => {
       if (!req.file) return res.status(400).json({ message: "No image uploaded" });
       const photoUrl = `/uploads/student-photos/${req.file.filename}`;
@@ -2409,7 +2422,7 @@ export async function registerRoutes(
           cb(null, unique + path.extname(file.originalname).toLowerCase());
         },
       }),
-      limits: { fileSize: STUDENT_UPLOAD_MAX_BYTES },
+      limits: { fileSize: STUDENT_HOMEWORK_UPLOAD_MAX_BYTES },
       fileFilter: (_req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
         if (ALLOWED_SUBMISSION_MIMES.has(file.mimetype) && ALLOWED_SUBMISSION_EXTS.has(ext)) {
@@ -2437,7 +2450,7 @@ export async function registerRoutes(
         if (err) {
           const tooLarge = err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE";
           res.status(400).json({
-            message: tooLarge ? "Homework file must be 1 MB or smaller." : err.message || "File upload failed",
+            message: tooLarge ? "Homework file must be 2 MB or smaller." : err.message || "File upload failed",
           });
           return;
         }
@@ -2759,7 +2772,7 @@ export async function registerRoutes(
   // Memory-storage multer — avoids diskStorage callback complexity that prevented req.body from being populated
   const leaveMemUpload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: STUDENT_UPLOAD_MAX_BYTES },
+    limits: { fileSize: STUDENT_LEAVE_ATTACHMENT_MAX_BYTES },
   });
 
   // Single atomic endpoint: fields + optional file arrive together, file written to disk from buffer
@@ -2768,7 +2781,7 @@ export async function registerRoutes(
       if (error) {
         const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
         res.status(400).json({
-          message: tooLarge ? "Leave attachment must be 1 MB or smaller." : error.message || "File upload failed",
+          message: tooLarge ? "Leave attachment must be 5 MB or smaller." : error.message || "File upload failed",
         });
         return;
       }
