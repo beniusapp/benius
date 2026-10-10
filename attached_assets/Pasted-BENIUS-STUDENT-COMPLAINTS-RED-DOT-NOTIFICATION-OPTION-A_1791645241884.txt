@@ -1,0 +1,102 @@
+BENIUS — STUDENT COMPLAINTS RED-DOT NOTIFICATION
+OPTION A — READ-ONLY IMPACT AUDIT
+
+OBJECTIVE
+
+Change only the Student Dashboard Complaints card's red-dot behavior so it reflects persistent unread complaints.
+
+Do not implement anything yet.
+
+CURRENT ARCHITECTURE
+
+- Homework, Classwork, Noticeboard and Complaints use the shared student module-dot mechanism.
+- Complaints currently uses qualifying Teacher/Admin complaint notes as its activity cursor.
+- Student Complaints also has persistent per-complaint read receipts, recently enabled in Development.
+- Existing module-level seen cursors must be preserved.
+
+TARGET BEHAVIOR
+
+1. A complaint that is unread by the authenticated Student should cause the Complaints dashboard red dot to appear.
+2. Opening the Complaints module alone must NOT clear the red dot if unread complaints remain.
+3. Opening an unread complaint should save its read receipt.
+4. Once all relevant complaints are read, the red dot should disappear.
+5. Read status must persist across refreshes, logins and devices.
+6. Resolved complaints must remain visible in history.
+7. Homework, Classwork and Noticeboard notification behavior must remain unchanged.
+
+PART A — EXISTING IMPLEMENTATION
+
+Inspect:
+- Student Dashboard Complaints dot rendering and state source.
+- Shared module-dot API and hook.
+- Complaints module-level mark-seen calls.
+- Per-complaint read-receipt API, database queries and frontend behavior.
+- Receipt feature-flag handling.
+
+Identify exact files, functions and code locations.
+
+PART B — IMPACT ANALYSIS
+
+Determine:
+
+1. Can the Complaints dashboard dot use the existing unread-receipt count without changing the shared module-dot behavior for other modules?
+
+2. What is the smallest safe approach to expose unread complaint status on the dashboard?
+
+3. Can the existing module-level Complaints seen cursor remain unchanged for compatibility while no longer controlling the Complaints dashboard dot?
+
+4. Does the current read-receipt implementation include all complaints that should count as unread, or only the From Teachers inbox?
+
+5. Should newly created complaints, new replies to previously read complaints, and resolved complaints be treated differently? Report current capabilities and any product decisions needed.
+
+6. What happens when the receipt feature is disabled or the API fails? Recommend a safe fallback that does not falsely show zero unread complaints.
+
+7. How will the dashboard update after a complaint is opened and marked read, including when returning from the Complaints page?
+
+8. Are the relevant queries fully isolated by authenticated School ID, Student ID and selected Academic Session ID?
+
+9. Are there any duplicate requests, race conditions, stale React Query caches, or navigation issues?
+
+10. Can this be implemented without any new database migration?
+
+PART C — TEST PLAN
+
+Propose focused regression tests for:
+
+- Unread complaint produces red dot.
+- Opening the module alone does not clear it.
+- Opening an individual complaint clears its unread state.
+- Multiple unread complaints keep the dot visible until all are read.
+- Resolved complaint behavior.
+- Refresh, logout/login and cross-device persistence.
+- School, Student and Academic Session isolation.
+- Other module dots remain unchanged.
+- API errors and disabled feature handling.
+
+PART D — RECOMMENDATION
+
+Provide:
+1. Current behavior versus proposed behavior.
+2. Exact files and functions requiring changes.
+3. Whether database changes are required.
+4. Risks and compatibility concerns.
+5. Any product decisions I must make.
+6. Smallest safe implementation plan.
+
+STRICT RULES
+
+- READ-ONLY AUDIT ONLY.
+- Do not modify any code or tests.
+- Do not run SQL or database migrations.
+- Do not change feature flags.
+- Do not restart services.
+- Do not deploy or publish.
+- Do not touch Production.
+- Do not modify Homework, Classwork or Noticeboard behavior.
+- Preserve existing module seen cursors.
+- Preserve strict School, Student and Academic Session isolation.
+- No Mobile work.
+
+Wait for my explicit approval before implementing anything.
+
+Keep the report concise, factual and easy to understand.
