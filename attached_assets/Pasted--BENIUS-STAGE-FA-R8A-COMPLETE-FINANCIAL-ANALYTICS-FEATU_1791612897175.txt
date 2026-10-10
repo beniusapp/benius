@@ -1,0 +1,351 @@
+# BENIUS — STAGE FA-R8A
+## COMPLETE FINANCIAL ANALYTICS FEATURE DISCOVERY & FUNCTIONAL INVENTORY
+### STRICT READ-ONLY AUDIT — NO IMPLEMENTATION
+
+BENIUS is a multi-tenant School Management Information System in DEVELOPMENT.
+
+The owner wants to verify that EVERY feature within:
+
+**Principal Portal → Fees & Payments → Financial Analytics**
+
+is accurate, complete, Academic Session isolated, and financially correct.
+
+Before performing another verification stage, first discover the ENTIRE implemented Financial Analytics module.
+
+**Do not rely only on previous audit reports or the feature names already mentioned by the owner.**
+
+Inspect the actual current application source to discover every feature.
+
+## 1. Strict safety rules
+
+DO NOT:
+
+- Modify any application code.
+- Modify any financial formula.
+- Modify payment or refund processing.
+- Modify invoice or receipt generation.
+- Modify Academic Session records.
+- Modify student enrollments.
+- Modify database records.
+- Run migrations.
+- Create databases or PostgreSQL clusters.
+- Restart workflows.
+- Deploy.
+- Change permissions.
+- Implement fixes.
+
+This stage is READ-ONLY DISCOVERY.
+
+No live financial database queries are authorized.
+
+## 2. Discover the complete Financial Analytics UI
+
+Inspect the actual Principal Portal Financial Analytics implementation.
+
+Identify EVERY:
+
+- Executive Summary card.
+- Financial metric.
+- Chart.
+- Graph.
+- Breakdown.
+- Table.
+- Report.
+- Filter.
+- Dropdown.
+- Button.
+- Refresh action.
+- Drill-down.
+- Drawer.
+- Modal.
+- PDF export.
+- Tooltip.
+- Comparison indicator.
+- Loading state.
+- Empty state.
+- Error state.
+- Permission restriction.
+- Academic Session dependency.
+
+Inspect all relevant frontend components, including nested components, conditional rendering, and features that may not be visible in the owner's screenshots.
+
+Do not assume the screenshots show the entire module.
+
+For each feature, record:
+
+1. Exact feature name.
+2. Purpose.
+3. Where it appears in the UI.
+4. User interaction.
+5. Data source.
+6. API endpoint.
+7. Backend calculation or processing function.
+8. Database tables involved.
+9. Academic Session behavior.
+10. School/tenant isolation.
+11. Date-filter behavior.
+12. PDF/export behavior, if applicable.
+13. Existing tests.
+14. Known limitations.
+15. Whether it is fully implemented, partially implemented, disabled, or unused.
+
+Distinguish actual user-visible features from backend-only helpers and unused code.
+
+## 3. Discover all Financial Analytics API endpoints
+
+Find every API endpoint used by Financial Analytics.
+
+Include:
+
+- Summary requests.
+- Chart requests.
+- Aging requests.
+- Student detail requests.
+- PDF exports.
+- Refresh operations.
+- Supporting metadata requests.
+
+For each endpoint report:
+
+- HTTP method and exact path.
+- Calling frontend feature.
+- Authentication requirement.
+- Permission requirement.
+- School ID source.
+- Academic Session ID source.
+- Server-side session validation.
+- Date parameters.
+- Database queries.
+- Response structure.
+- Whether it is read-only.
+- Existing tests.
+
+Identify any Financial Analytics endpoint not currently called by the frontend.
+
+## 4. Discover every financial calculation
+
+Identify every financial formula used anywhere within Financial Analytics.
+
+Include calculations for:
+
+- Billed demand.
+- Due This Period.
+- Gross Collected.
+- Net Collected.
+- Outstanding.
+- Collection Efficiency.
+- Online Collection.
+- Offline Collection.
+- Overdue Amount.
+- Collection Trend.
+- Payment Channels.
+- Class Performance.
+- Fee Categories.
+- Receivables Aging.
+- Cash Denomination Coverage.
+- Comparison periods.
+- Percentages.
+- Average transaction amounts.
+- Refund-adjusted balances.
+- Any other calculated figure discovered.
+
+For every calculation provide:
+
+- Exact formula.
+- Source tables and columns.
+- Included/excluded record statuses.
+- Date basis.
+- School scope.
+- Academic Session scope.
+- Refund treatment.
+- Late-fee treatment.
+- Currency precision.
+- Rounding rules.
+- Relationship to other financial metrics.
+- Known accounting-definition ambiguities.
+
+Do not modify any formula.
+
+## 5. Discover all Academic Session dependencies
+
+For EVERY feature, determine:
+
+- Whether it uses the selected Academic Session ID.
+- Whether it uses the authenticated school ID.
+- Whether it uses historical enrollment.
+- Whether it uses current Student Registry placement.
+- Whether archived sessions are supported.
+- Whether session switching refreshes its data.
+- Whether stale responses are prevented.
+- Whether page refresh preserves the selected session.
+- Whether PDF exports use the selected session.
+- Whether date filters remain session-scoped.
+
+Identify any feature that lacks explicit school/session scoping.
+
+Historical financial placement must be evaluated using the invoice's Academic Session rather than assuming the student's current class is correct.
+
+Do not change any session behavior.
+
+## 6. Discover all filters and interactions
+
+Document all supported reporting filters and their exact behavior.
+
+Include:
+
+- Today.
+- This Week.
+- This Month.
+- Academic Year.
+- Custom date range.
+- Any additional filters discovered.
+- Aging bucket selection.
+- Class/section filters.
+- Sorting.
+- Pagination or result limits.
+- Refresh.
+- PDF downloads.
+- Session switching.
+
+Document any controls that appear interactive but have incomplete or missing functionality.
+
+## 7. Discover every PDF and export
+
+List all PDF and export actions available in Financial Analytics.
+
+For each export identify:
+
+- Source UI button.
+- API endpoint.
+- Report section.
+- School identity.
+- Academic Session identity.
+- Reporting period.
+- Data source.
+- Currency formatting.
+- Historical placement handling.
+- Empty-state handling.
+- Session-switch protection.
+- Existing tests.
+
+Distinguish independent calculations from PDF reports that reuse the dashboard's data object.
+
+## 8. Map all dependencies
+
+Create a complete dependency map:
+
+UI feature → frontend component → API endpoint → backend function → database tables → calculation → PDF/export.
+
+Provide exact file paths and line numbers.
+
+Identify shared helpers and dependencies that could affect multiple Financial Analytics features.
+
+Do not inspect or modify unrelated modules except where required to understand shared financial calculations.
+
+## 9. Build a complete test coverage plan
+
+After discovering all features, produce a test matrix for EVERY discovered feature.
+
+For each feature specify:
+
+- Expected behavior.
+- Mathematical test.
+- Academic Session isolation test.
+- Active-session test.
+- Archived-session test.
+- Historical enrollment test, if relevant.
+- Date-filter test.
+- Refund test, if relevant.
+- Currency precision test.
+- PDF test, if relevant.
+- Security/permission test.
+- Existing test coverage.
+- Missing test coverage.
+- Whether signed-in UI or authorized financial data is required.
+
+Include edge cases such as:
+
+- No invoices.
+- No payments.
+- Partial payments.
+- Multiple payments.
+- Processed refunds.
+- Pending/failed refunds.
+- Late fees.
+- Promoted students.
+- Missing historical enrollment.
+- Multiple archived sessions.
+- Payments received after session end.
+- Fractional-rupee values.
+- Rapid Academic Session switching.
+- Empty charts.
+- More than 200 aging records.
+
+## 10. Required final report
+
+### A. Complete Financial Analytics feature inventory
+
+Provide a numbered hierarchical list of ALL features and subfeatures actually found.
+
+### B. Feature-to-code mapping
+
+| Feature | UI file | API endpoint | Backend function | Tables | Session scope |
+
+### C. Complete calculation inventory
+
+| Calculation | Exact formula | Date basis | Refund behavior | Session scope |
+
+### D. All filters and user interactions
+
+Include each control and its actual behavior.
+
+### E. All PDF and export options
+
+List each export independently.
+
+### F. Academic Session coverage
+
+| Feature | Active | Archived | School isolation | Historical enrollment | Risk |
+
+### G. Existing test coverage
+
+Show tests already available and what they actually verify.
+
+### H. Missing verification coverage
+
+List every feature requiring additional testing.
+
+### I. Potential defects and accounting ambiguities
+
+Separate confirmed source defects, possible risks, and owner decisions.
+
+### J. Complete FA-R8B verification checklist
+
+Create a comprehensive test checklist covering EVERY discovered feature, without omitting any.
+
+### K. Safety confirmation
+
+Confirm:
+
+- Source changed: NO.
+- Database accessed: NO.
+- Database modified: NO.
+- Financial formulas changed: NO.
+- Payment/refund operations: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restart: NO.
+
+## 11. Mandatory stop
+
+After producing the complete feature inventory and test plan, STOP.
+
+Do not start implementation.
+
+Do not change calculations.
+
+Do not fix discovered defects.
+
+Do not begin FA-R8B automatically.
+
+Wait for owner review and approval.
