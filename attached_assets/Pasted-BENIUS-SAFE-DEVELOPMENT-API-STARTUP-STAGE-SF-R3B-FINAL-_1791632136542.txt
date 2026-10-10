@@ -1,0 +1,71 @@
+BENIUS — SAFE DEVELOPMENT API STARTUP
+
+STAGE SF-R3B: FINAL STARTUP SIDE-EFFECT REVIEW
+
+CONTEXT:
+
+Student Portal → Fees corrections are implemented and tested.
+
+Development safeguards already exist for:
+- Automatic Reminders
+- Automatic Overdue Fee Processing
+
+However, the API startup still contains potentially database-writing maintenance tasks, including:
+- Payment record reconstruction
+- Payment Academic Session backfilling
+- Payment attempt/event reconciliation
+
+OBJECTIVE:
+
+Identify all remaining automatic startup operations that could modify existing database records or contact external providers.
+
+TASK:
+
+1. Inspect the complete Development API startup execution path, including functions called indirectly.
+
+2. Identify automatic startup tasks that can:
+   - INSERT records.
+   - UPDATE records.
+   - DELETE records.
+   - Backfill or reconcile historical data.
+   - Send external notifications.
+   - Contact payment providers.
+   - Change invoice/payment statuses.
+
+3. Distinguish startup maintenance from normal authenticated API operations.
+
+4. Propose the smallest Development-only safety control that prevents automatic startup maintenance writes while preserving normal application functionality.
+
+5. Prefer one centralized startup-maintenance guard instead of creating separate environment flags for every task.
+
+6. Preserve existing Production startup behavior.
+
+7. Do not disable normal authenticated payment, invoice, or fee operations.
+
+8. Explain whether the existing reminder and overdue-fee guards remain effective.
+
+9. Identify any remaining startup side effects that cannot be safely disabled.
+
+STRICT RULES:
+
+- READ-ONLY INSPECTION AND PLAN ONLY.
+- Do not modify source code.
+- Do not modify database records.
+- Do not run reconciliation or backfill tasks.
+- Do not restart services.
+- Do not deploy or publish.
+- Do not contact external payment providers.
+- Do not change financial formulas.
+- Do not work on Mobile.
+- Do not perform an unrelated application audit.
+
+REPORT:
+
+A. Complete list of automatic startup side effects, with file and line references.
+B. Which operations are already protected.
+C. Which operations remain unprotected.
+D. Smallest safe Development-only solution.
+E. Whether any unresolved blockers remain.
+F. Exact changes required before a safe restart.
+
+Keep the report concise and conclusive. Do not implement anything yet.
