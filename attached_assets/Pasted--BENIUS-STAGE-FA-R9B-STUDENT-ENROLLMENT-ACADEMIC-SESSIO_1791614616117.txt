@@ -1,0 +1,293 @@
+# BENIUS — STAGE FA-R9B
+## STUDENT ENROLLMENT, ACADEMIC SESSION, CLASS/SECTION DISPLAY & PDF VERIFICATION
+
+### STRICT READ-ONLY AUDIT — NO CHANGES AUTHORIZED
+
+BENIUS is a multi-tenant School Management Information System.
+
+The owner requires that every student-related Class and Section displayed within Financial Analytics correspond to the student's enrollment in the selected Academic Session.
+
+This requirement applies to both:
+
+1. Financial Analytics UI.
+2. Every applicable Financial Analytics PDF export.
+
+This stage is verification only.
+
+## 1. Mandatory historical enrollment rule
+
+For every student-related financial record, resolve placement using:
+
+- Authenticated School ID.
+- Student ID.
+- Selected Academic Session ID, consistent with the financial record's invoice session.
+
+The resulting Class and Section must come from that student's enrollment in the corresponding Academic Session.
+
+Do not use the student's current Student Registry Class/Section when viewing a previous Academic Session.
+
+Do not use a different Academic Session's enrollment.
+
+Do not infer historical placement from the student's current class.
+
+Do not fall back to current Registry placement if historical enrollment is missing or ambiguous.
+
+## 2. Verify the complete data relationship
+
+Trace the actual application code:
+
+Authenticated School ID
+→ Selected Academic Session ID
+→ Fee Record / Invoice
+→ Student ID
+→ Enrollment matching School ID + Student ID + Invoice Academic Session ID
+→ Historical Class and Section
+→ Financial Analytics API response
+→ UI display
+→ PDF export.
+
+Verify that the Student ID comes from the correct invoice/student relationship.
+
+Verify that a fee record from one Academic Session cannot accidentally resolve an enrollment from another session.
+
+Verify that a student from School B cannot be joined to an enrollment from School A.
+
+Identify exact file paths, functions, SQL predicates, and line numbers.
+
+## 3. Verify active-session display
+
+Use a synthetic example:
+
+Student STU-101
+
+2026–2027:
+Class 1, Section A
+
+2027–2028:
+Class 2, Section B
+
+When Financial Analytics selects 2027–2028:
+
+- Student-level Class must be 2.
+- Student-level Section must be B.
+- Class Performance must attribute financial amounts to Class 2.
+- Aging drawer must show Class 2-B when applicable.
+- Applicable PDFs must use the correct selected-session class.
+
+Do not assume the current Registry class is correct merely because the active session is selected.
+
+## 4. Verify archived-session display
+
+Switch the selected Academic Session to 2026–2027.
+
+Expected:
+
+- Student-level Class must be 1.
+- Student-level Section must be A.
+- Class Performance must attribute financial amounts to Class 1.
+- Aging drawer must show Class 1-A when applicable.
+- Applicable PDFs must use the correct archived-session class.
+
+Verify that Class 2-B does not appear as the historical placement for this student.
+
+Verify that changing the selected session refreshes or correctly invalidates class-dependent data.
+
+## 5. Verify every relevant Financial Analytics feature
+
+Inspect every discovered Financial Analytics feature for Class/Section usage.
+
+At minimum verify:
+
+- Class Performance chart/table.
+- Receivables Aging student drawer.
+- Aging drawer Class filter.
+- Student-level outstanding information.
+- Any student-level drill-down.
+- Any additional Class/Section labels or fields.
+- Complete Financial Analytics PDF.
+- Class Performance PDF.
+- Aging PDF.
+- Any other PDF containing Class, Section, or student placement.
+
+Do not assume every PDF contains student-level placement.
+
+For each feature, explicitly report whether it:
+
+A. Displays Class only.
+
+B. Displays Class and Section.
+
+C. Displays no student placement.
+
+D. Uses an incorrect or unverified placement source.
+
+The Class Performance grouping is currently Class-only. Do not introduce Section grouping or change financial aggregation.
+
+## 6. Verify UI and PDF consistency
+
+For the same selected school, Academic Session, date range, and financial dataset:
+
+- Compare the API Class Performance result with its UI rendering.
+- Compare the API result with the Class Performance PDF.
+- Compare the complete report's Class Performance section with the standalone PDF.
+- Verify student-level Aging drawer placement.
+- Determine whether the Aging PDF contains individual student placements or only bucket summaries.
+
+Do not claim student-level PDF verification if the PDF does not contain student-level rows.
+
+Verify that all existing Class/Section fields are correctly labeled.
+
+Ensure the PDF never silently substitutes the student's current class for archived-session placement.
+
+## 7. Test session switching
+
+Test:
+
+Active → Archived.
+
+Archived → Active.
+
+Archived Session A → Archived Session B.
+
+Rapid switching between sessions.
+
+Browser refresh while archived session is selected.
+
+PDF generation while switching sessions.
+
+Verify:
+
+- No stale class values.
+- No stale student enrollment.
+- No cross-session class attribution.
+- No cross-session PDF data.
+- No cached response from another session.
+
+## 8. Test missing or ambiguous enrollment
+
+Test:
+
+- Correct enrollment exists.
+- No enrollment exists for selected session.
+- Duplicate enrollment exists.
+- Incomplete Class/Section.
+- Enrollment exists only in a different session.
+- Student has changed schools.
+- Student is no longer active.
+- Current Registry class differs from historical enrollment.
+
+Expected:
+
+If the correct session-specific placement cannot be resolved unambiguously, show an appropriate unavailable value rather than using the current Registry class.
+
+Do not change existing enrollment records.
+
+## 9. Test with independently constructed data
+
+Create synthetic data for at least:
+
+- Two schools.
+- Three Academic Sessions.
+- One promoted student.
+- One student with a Section change.
+- One student missing historical enrollment.
+- One student with duplicate historical enrollment.
+- Multiple invoices across different sessions.
+
+Independently specify expected Class and Section values before executing application code.
+
+Where possible, execute the actual Financial Analytics service with mocked database results.
+
+Test the UI component and PDF renderer with representative selected-session data.
+
+Do not merely inspect SQL and declare the UI/PDF verified.
+
+If tests cannot execute, clearly report NOT VERIFIED.
+
+## 10. Do not modify financial behavior
+
+Absolutely no changes to:
+
+- Financial formulas.
+- Invoice amounts.
+- Payment records.
+- Refund records.
+- Outstanding calculations.
+- Collection Efficiency.
+- Net Collected.
+- Academic Session records.
+- Enrollment records.
+- Student Registry.
+- Class Performance grouping.
+- Database schema.
+- Other modules.
+
+Do not access or modify the real financial database.
+
+Do not trigger payments, refunds, reminders, or dunning.
+
+Do not deploy or restart workflows.
+
+## 11. Required report
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Exact enrollment resolution
+
+Explain how School ID, Student ID, and Academic Session ID are joined.
+
+Include exact file paths and line numbers.
+
+### C. Feature-by-feature placement matrix
+
+| Financial Analytics feature | Class displayed | Section displayed | Placement source | Active result | Archived result | Verdict |
+
+### D. Active versus Archived verification
+
+Use independently specified synthetic student placements and show expected versus actual values.
+
+### E. UI verification
+
+Distinguish source review, mocked component testing, and signed-in UI testing.
+
+### F. PDF verification
+
+List every applicable PDF and the Class/Section fields actually present.
+
+Verify class values, not only PDF headings.
+
+### G. Session-switching verification
+
+Include stale data, caching, and PDF session identity.
+
+### H. Missing/duplicate enrollment verification
+
+Confirm no current-class fallback.
+
+### I. Confirmed defects
+
+Provide exact file/line references and the smallest proposed correction.
+
+### J. Coverage limitations
+
+Identify any UI, route, PDF, or real database scenario that remains unverified.
+
+### K. Safety confirmation
+
+Confirm no application, database, or financial changes.
+
+## 12. Mandatory stop
+
+After completing the verification report, STOP.
+
+Do not implement fixes.
+
+Do not change Class Performance grouping.
+
+Do not add Section aggregation.
+
+Do not modify historical enrollment logic.
+
+Wait for owner approval.
