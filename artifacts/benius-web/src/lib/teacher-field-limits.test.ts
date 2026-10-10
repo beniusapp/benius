@@ -7,6 +7,7 @@ import {
   TEACHER_EBOOK_MAX_BYTES,
   TEACHER_GALLERY_IMAGE_MAX_BYTES,
   TEACHER_GALLERY_MAX_IMAGES,
+  TEACHER_GALLERY_MAX_TOTAL_BYTES,
   TEACHER_PROFILE_PHOTO_MAX_BYTES,
 } from "./teacher-field-limits";
 
@@ -18,13 +19,14 @@ describe("Teacher Portal limits", () => {
     }
   });
 
-  it("limits Gallery to ten images with each at most 10 MB", () => {
+  it("limits Gallery to five images with a 25 MiB combined payload", () => {
     const exact = new File([new Uint8Array(TEACHER_GALLERY_IMAGE_MAX_BYTES)], "photo.jpg");
     const tooLarge = new File([new Uint8Array(TEACHER_GALLERY_IMAGE_MAX_BYTES + 1)], "large.jpg");
-    expect(TEACHER_GALLERY_MAX_IMAGES).toBe(10);
-    expect(isTeacherGalleryBatchValid(Array(10).fill(exact))).toBe(true);
-    expect(isTeacherGalleryBatchValid([...Array(9).fill(exact), tooLarge])).toBe(false);
-    expect(isTeacherGalleryBatchValid(Array(11).fill(exact))).toBe(false);
+    expect(TEACHER_GALLERY_MAX_IMAGES).toBe(5);
+    expect(TEACHER_GALLERY_MAX_TOTAL_BYTES).toBe(26_214_400);
+    expect(isTeacherGalleryBatchValid(Array(5).fill(exact))).toBe(true);
+    expect(isTeacherGalleryBatchValid([...Array(4).fill(exact), tooLarge])).toBe(false);
+    expect(isTeacherGalleryBatchValid(Array(6).fill(exact))).toBe(false);
   });
 
   it("counts trimmed whitespace-separated words and caps Teacher leave at 500", () => {

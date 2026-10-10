@@ -14,6 +14,7 @@ import {
   TEACHER_EBOOK_MAX_BYTES,
   TEACHER_GALLERY_IMAGE_MAX_BYTES,
   TEACHER_GALLERY_MAX_IMAGES,
+  TEACHER_GALLERY_MAX_TOTAL_BYTES,
   TEACHER_LEAVE_REASON_MAX_WORDS,
   TEACHER_PROFILE_PHOTO_MAX_BYTES,
 } from "./teacher-field-limits";
@@ -580,7 +581,11 @@ const teacherGalleryUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: TEACHER_GALLERY_IMAGE_MAX_BYTES, files: TEACHER_GALLERY_MAX_IMAGES },
+  limits: {
+    fileSize: TEACHER_GALLERY_IMAGE_MAX_BYTES,
+    files: TEACHER_GALLERY_MAX_IMAGES,
+    parts: TEACHER_GALLERY_MAX_IMAGES + 7,
+  },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
     else cb(new Error("Only image files are allowed"));
@@ -591,11 +596,12 @@ const galleryUploadMiddleware = (middleware: RequestHandler): RequestHandler => 
   middleware(req, res, (error?: any) => {
     if (error) {
       const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
-      const tooMany = error instanceof multer.MulterError && error.code === "LIMIT_UNEXPECTED_FILE";
+      const tooMany = error instanceof multer.MulterError
+        && ["LIMIT_UNEXPECTED_FILE", "LIMIT_FILE_COUNT"].includes(error.code);
       res.status(tooLarge ? 413 : 400).json({
         message: tooLarge
           ? "Each gallery image must be 10 MB or smaller."
-          : tooMany ? "A maximum of 10 images can be uploaded at once." : error.message || "Gallery upload failed",
+          : tooMany ? "A maximum of 5 images can be uploaded at once." : error.message || "Gallery upload failed",
       });
       return;
     }
@@ -2999,8 +3005,9 @@ export function registerTeacherRoutes(app: Express) {
     const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
-    if (!isTeacherGalleryBatchValid(files.map(file => file.size))) {
-      return res.status(400).json({ message: "Upload up to 10 images, each 10 MB or smaller." });
+    if (!isTeacherGalleryBatchValid(files.map(file => file.size))
+      || files.reduce((total, file) => total + file.size, 0) > TEACHER_GALLERY_MAX_TOTAL_BYTES) {
+      return res.status(400).json({ message: "Upload up to 5 images, each 5 MB or smaller, with no more than 25 MB combined." });
     }
 
     const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;

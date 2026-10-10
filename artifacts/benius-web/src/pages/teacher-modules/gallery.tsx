@@ -73,14 +73,14 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length > TEACHER_GALLERY_MAX_IMAGES) {
-      toast({ title: "Too many files", description: "Up to 10 images at once.", variant: "destructive" });
+      toast({ title: "Too many files", description: "Up to 5 images at once.", variant: "destructive" });
       setSelectedFiles([]);
       setPreviews((previous) => { previous.forEach(URL.revokeObjectURL); return []; });
       e.currentTarget.value = "";
       return;
     }
     if (!isTeacherGalleryBatchValid(files)) {
-      toast({ title: "Image too large", description: "Each image must be 10 MB or smaller.", variant: "destructive" });
+      toast({ title: "Image too large", description: "Each image must be 5 MB or smaller.", variant: "destructive" });
       setSelectedFiles([]);
       setPreviews((previous) => { previous.forEach(URL.revokeObjectURL); return []; });
       e.currentTarget.value = "";
@@ -104,7 +104,7 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
 
   const doUpload = async () => {
     if (!selectedFiles.length) throw new Error("Select at least one image");
-    if (!isTeacherGalleryBatchValid(selectedFiles)) throw new Error("Upload up to 10 images, each 10 MB or smaller.");
+    if (!isTeacherGalleryBatchValid(selectedFiles)) throw new Error("Upload up to 5 images, each 5 MB or smaller.");
     if (!title.trim()) throw new Error("Title is required");
     setIsUploading(true); setUploadProgress(0);
     const fd = new FormData();
@@ -336,9 +336,9 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
                 data-testid="button-select-images"
               >
                 <Images className="w-4 h-4 inline mr-2" />
-                {selectedFiles.length ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected` : "Select Images (up to 10)"}
+                {selectedFiles.length ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected` : "Select Images (up to 5)"}
               </button>
-              <p className="mt-1 text-xs text-gray-500">Up to 10 images • Max 10 MB each</p>
+              <p className="mt-1 text-xs text-gray-500">Up to 5 images • Max 5 MB each</p>
               <input type="file" ref={fileRef} accept="image/*" multiple className="hidden" onChange={handleFileSelect} data-max-bytes={TEACHER_GALLERY_IMAGE_MAX_BYTES} data-testid="input-gallery-file" />
             </div>
 

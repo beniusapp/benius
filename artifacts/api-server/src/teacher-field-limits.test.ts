@@ -7,6 +7,7 @@ import {
   TEACHER_EBOOK_MAX_BYTES,
   TEACHER_GALLERY_IMAGE_MAX_BYTES,
   TEACHER_GALLERY_MAX_IMAGES,
+  TEACHER_GALLERY_MAX_TOTAL_BYTES,
   TEACHER_LEAVE_REASON_MAX_WORDS,
   TEACHER_PROFILE_PHOTO_MAX_BYTES,
 } from "./teacher-field-limits";
@@ -15,12 +16,16 @@ const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join("
 
 test("Teacher upload caps accept exact limits and reject one byte over", () => {
   assert.equal(TEACHER_PROFILE_PHOTO_MAX_BYTES, 5_242_880);
-  assert.equal(TEACHER_GALLERY_IMAGE_MAX_BYTES, 10_485_760);
+  assert.equal(TEACHER_GALLERY_IMAGE_MAX_BYTES, 5_242_880);
   assert.equal(TEACHER_EBOOK_MAX_BYTES, 10_485_760);
+  assert.equal(TEACHER_GALLERY_MAX_IMAGES, 5);
+  assert.equal(TEACHER_GALLERY_MAX_TOTAL_BYTES, 26_214_400);
   assert.equal(isTeacherGalleryBatchValid([TEACHER_GALLERY_IMAGE_MAX_BYTES]), true);
   assert.equal(isTeacherGalleryBatchValid([TEACHER_GALLERY_IMAGE_MAX_BYTES + 1]), false);
   assert.equal(isTeacherGalleryBatchValid(Array(TEACHER_GALLERY_MAX_IMAGES).fill(TEACHER_GALLERY_IMAGE_MAX_BYTES)), true);
-  assert.equal(isTeacherGalleryBatchValid(Array(11).fill(1)), false);
+  assert.equal(isTeacherGalleryBatchValid(Array(6).fill(1)), false);
+  assert.equal(isTeacherGalleryBatchValid(Array(5).fill(TEACHER_GALLERY_IMAGE_MAX_BYTES + 1)), false);
+  assert.equal(isTeacherGalleryBatchValid([TEACHER_GALLERY_MAX_TOTAL_BYTES + 1]), false);
 });
 
 test("Teacher leave reason is whitespace-word-counted and capped at 500", () => {

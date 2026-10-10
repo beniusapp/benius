@@ -1,6 +1,7 @@
 export const TEACHER_PROFILE_PHOTO_MAX_BYTES = 5_242_880;
-export const TEACHER_GALLERY_IMAGE_MAX_BYTES = 10_485_760;
-export const TEACHER_GALLERY_MAX_IMAGES = 10;
+export const TEACHER_GALLERY_IMAGE_MAX_BYTES = 5_242_880;
+export const TEACHER_GALLERY_MAX_IMAGES = 5;
+export const TEACHER_GALLERY_MAX_TOTAL_BYTES = 26_214_400;
 export const TEACHER_EBOOK_MAX_BYTES = 10_485_760;
 export const TEACHER_LEAVE_REASON_MAX_WORDS = 500;
 
@@ -19,5 +20,6 @@ export function exceedsTeacherUploadLimit(file: File, maxBytes: number): boolean
 
 export function isTeacherGalleryBatchValid(files: File[]): boolean {
   return files.length <= TEACHER_GALLERY_MAX_IMAGES
-    && files.every(file => !exceedsTeacherUploadLimit(file, TEACHER_GALLERY_IMAGE_MAX_BYTES));
+    && files.every(file => !exceedsTeacherUploadLimit(file, TEACHER_GALLERY_IMAGE_MAX_BYTES))
+    && files.reduce((total, file) => total + file.size, 0) <= TEACHER_GALLERY_MAX_TOTAL_BYTES;
 }
