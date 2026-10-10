@@ -30,9 +30,9 @@
 import { db, pool } from "./db";
 import {
   feeRecords, students, notificationConfig, dunningLog,
-  academicSessions, dunningTemplates, dunningJobStatus,
+  academicSessions, dunningTemplates, dunningJobStatus, paymentRecords, refunds,
 } from "@workspace/db";
-import { eq, and, inArray, or } from "drizzle-orm";
+import { eq, and, inArray, or, sum, isNotNull, sql } from "drizzle-orm";
 
 function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
 
@@ -94,6 +94,50 @@ export interface SimulationResult {
  */
 export function formatAmount(amount: number): string {
   return amount.toLocaleString("en-IN");
+}
+
+/** Mirrors the canonical Fees aging formula: billed + late fee - payments + processed refunds. */
+export function calculateDunningOutstanding(
+  billedAmount: number,
+  lateFeeAmount: number,
+  paidAmount: number,
+  processedRefundRupees: number,
+): number {
+  return Math.max(0, billedAmount + lateFeeAmount - paidAmount + processedRefundRupees);
+}
+
+export function needsManualResendConfirmation(hasPriorSuccessfulSend: boolean, confirmed: boolean): boolean {
+  return hasPriorSuccessfulSend && !confirmed;
+}
+
+export function dunningAttemptKey(feeId: number, channel: string, stage: string): string {
+  return `${feeId}|${channel}|${stage}`;
+}
+
+export function isAutomaticDunningDuplicate(
+  sentAttempts: ReadonlySet<string>,
+  feeId: number,
+  channel: string,
+  stage: string,
+): boolean {
+  return sentAttempts.has(dunningAttemptKey(feeId, channel, stage));
+}
+
+export function isDunningRecordInScope(
+  record: { schoolId: number; sessionId: number },
+  schoolId: number,
+  sessionId: number,
+): boolean {
+  return record.schoolId === schoolId && record.sessionId === sessionId;
+}
+
+export function isDunningTestChannel(channel: string): channel is "sms" | "email" {
+  return channel === "sms" || channel === "email";
+}
+
+export function shouldRetryDunningFailure(message: string, attempt: number): boolean {
+  const isNonRetryable4xx = /HTTP (4\d\d)/.test(message) && !/HTTP 429/.test(message);
+  return !isNonRetryable4xx && attempt < MAX_RETRIES;
 }
 
 /**
@@ -235,8 +279,7 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
       lastError = err instanceof Error ? err : new Error(String(err));
       const msg = lastError.message;
       // HTTP 4xx (except 429) = configuration error — do not retry
-      const is4xx = /HTTP (4\d\d)/.test(msg) && !/HTTP 429/.test(msg);
-      if (is4xx || attempt === MAX_RETRIES) break;
+      if (!shouldRetryDunningFailure(msg, attempt)) break;
       const delay = RETRY_DELAYS_MS[attempt - 1] ?? 4_000;
       log(`${label} attempt ${attempt} failed (${msg.slice(0, 80)}…), retrying in ${delay}ms`);
       await new Promise(r => setTimeout(r, delay));
@@ -522,6 +565,63 @@ async function fetchFeeRows(schoolId: number, statusFilter: string[] | null, ses
     .where(and(...conditions));
 }
 
+/** Loads the same payment/refund-adjusted outstanding balance used by Fees Aging. */
+async function loadOutstandingAmounts(
+  schoolId: number,
+  sessionId: number,
+  feeIds: number[],
+): Promise<Map<number, number>> {
+  const balances = new Map<number, number>();
+  if (feeIds.length === 0) return balances;
+  const invoiceConditions = [
+    eq(feeRecords.schoolId, schoolId),
+    eq(feeRecords.sessionId, sessionId),
+    inArray(feeRecords.id, feeIds),
+  ];
+  const invoices = await db.select({
+    id: feeRecords.id,
+    schoolId: feeRecords.schoolId,
+    sessionId: feeRecords.sessionId,
+    amount: feeRecords.amount,
+    lateFeeAmount: feeRecords.lateFeeAmount,
+  }).from(feeRecords).where(and(...invoiceConditions));
+  const [payments, processedRefunds] = await Promise.all([
+    db.select({
+      feeRecordId: paymentRecords.feeRecordId,
+      paid: sum(paymentRecords.amount),
+    }).from(paymentRecords).where(and(
+      eq(paymentRecords.schoolId, schoolId),
+      inArray(paymentRecords.feeRecordId, feeIds),
+      isNotNull(paymentRecords.feeRecordId),
+    )).groupBy(paymentRecords.feeRecordId),
+    db.select({
+      feeRecordId: refunds.feeRecordId,
+      refunded: sql<string>`SUM(COALESCE(${refunds.processedAmountPaise}, ${refunds.requestedAmountPaise})) / 100.0`,
+    }).from(refunds).where(and(
+      eq(refunds.schoolId, schoolId),
+      eq(refunds.localStatus, "processed"),
+      inArray(refunds.feeRecordId, feeIds),
+      isNotNull(refunds.feeRecordId),
+    )).groupBy(refunds.feeRecordId),
+  ]);
+  const paidByFee = new Map(payments.map(row => [row.feeRecordId!, Number(row.paid ?? 0)]));
+  const refundedByFee = new Map(processedRefunds.map(row => [row.feeRecordId!, Number(row.refunded ?? 0)]));
+  for (const invoice of invoices) {
+    if (!isDunningRecordInScope(
+      { schoolId: invoice.schoolId, sessionId: invoice.sessionId! },
+      schoolId,
+      sessionId,
+    )) continue;
+    balances.set(invoice.id, calculateDunningOutstanding(
+      Number(invoice.amount ?? 0),
+      Number(invoice.lateFeeAmount ?? 0),
+      paidByFee.get(invoice.id) ?? 0,
+      refundedByFee.get(invoice.id) ?? 0,
+    ));
+  }
+  return balances;
+}
+
 // ─── Job status helper ────────────────────────────────────────────────────────
 
 async function setJobStatus(schoolId: number, isRunning: boolean): Promise<void> {
@@ -598,9 +698,14 @@ export async function runDunningJob(): Promise<void> {
  */
 export async function runDunningSimulation(schoolId: number, sessionId?: number | null): Promise<SimulationResult> {
   const rows = await fetchFeeRows(schoolId, null, sessionId);
+  const session = sessionId ?? (await db.select({ id: academicSessions.id }).from(academicSessions)
+    .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true))).limit(1))[0]?.id;
+  const balances = session == null ? new Map<number, number>() :
+    await loadOutstandingAmounts(schoolId, session, rows.map(row => row.feeId));
+  const eligibleRows = rows.filter(row => (balances.get(row.feeId) ?? 0) > 0);
 
   const result: SimulationResult = {
-    totalFees: rows.length,
+    totalFees: eligibleRows.length,
     entriesLogged: 0,
     byChannel: {
       sms:      { would_send: 0, missing_contact: 0 },
@@ -609,13 +714,13 @@ export async function runDunningSimulation(schoolId: number, sessionId?: number 
     },
     entries: [],
   };
-  if (rows.length === 0) return result;
+  if (eligibleRows.length === 0) return result;
 
   const channels: Channel[] = ["sms", "whatsapp", "email"];
 
-  for (const row of rows) {
+  for (const row of eligibleRows) {
     const stage       = getStageForSimulation(String(row.dueDate));
-    const totalAmount = (row.amount ?? 0) + (row.lateFeeAmount ?? 0);
+    const totalAmount = balances.get(row.feeId)!;
     const fee: FeeForDunning = {
       feeId:        row.feeId,
       schoolId:     row.schoolId,
@@ -681,7 +786,8 @@ export async function runDunningForSingleFee(
   schoolId: number,
   feeRecordId: number,
   sessionId?: number | null,
-): Promise<{ sent: string[]; failed: string[]; skipped: string[] }> {
+  confirmResend = false,
+): Promise<{ sent: string[]; failed: string[]; skipped: string[]; requiresConfirmation?: boolean; duplicateChannels?: string[]; stage?: Stage }> {
   const sent: string[] = [], failed: string[] = [], skipped: string[] = [];
   const conditions = [
     eq(feeRecords.id, feeRecordId),
@@ -715,10 +821,6 @@ export async function runDunningForSingleFee(
   if (rows.length === 0) throw new Error("Fee record not found or does not belong to this school");
 
   const row = rows[0];
-  if (row.status === "Paid") {
-    return { sent, failed, skipped: [`${row.status} — no reminder needed`] };
-  }
-
   const cfgRows = await db.select().from(notificationConfig)
     .where(eq(notificationConfig.schoolId, schoolId)).limit(1);
   if (cfgRows.length === 0) {
@@ -738,7 +840,12 @@ export async function runDunningForSingleFee(
   try { tmap = await loadTemplates(schoolId); } catch { /* use defaults */ }
 
   const stage       = getStageForManualTrigger(String(row.dueDate));
-  const totalAmount = (row.amount ?? 0) + (row.lateFeeAmount ?? 0);
+  const sessionForBalance = sessionId ?? (await db.select({ id: academicSessions.id }).from(academicSessions)
+    .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true))).limit(1))[0]?.id;
+  if (sessionForBalance == null) return { sent, failed, skipped: ["No academic session selected or active"] };
+  const balance = (await loadOutstandingAmounts(schoolId, sessionForBalance, [row.feeId])).get(row.feeId) ?? 0;
+  if (balance <= 0) return { sent, failed, skipped: ["No outstanding balance — no reminder needed"] };
+  const totalAmount = balance;
 
   const fee: FeeForDunning = {
     feeId:        row.feeId,   schoolId: row.schoolId,
@@ -748,12 +855,30 @@ export async function runDunningForSingleFee(
     amount: totalAmount, dueDate: String(row.dueDate), status: row.status, stage,
   };
 
+  const priorSends = await db.select({ channel: dunningLog.channel }).from(dunningLog).where(and(
+    eq(dunningLog.schoolId, schoolId),
+    eq(dunningLog.feeRecordId, fee.feeId),
+    eq(dunningLog.stage, stage),
+    eq(dunningLog.status, "sent"),
+    inArray(dunningLog.channel, channels),
+  ));
+  const duplicateChannels = [...new Set(priorSends.map(item => item.channel))];
+  if (needsManualResendConfirmation(duplicateChannels.length > 0, confirmResend)) {
+    return { sent, failed, skipped, requiresConfirmation: true, duplicateChannels, stage };
+  }
+
   for (const channel of channels) {
-    let status: "sent" | "failed" = "failed";
+    let status: "sent" | "failed" | "skipped" = "failed";
     let errorMessage: string | undefined;
     let recipient: string | undefined;
 
     try {
+      const freshBalance = (await loadOutstandingAmounts(schoolId, sessionForBalance, [fee.feeId])).get(fee.feeId) ?? 0;
+      if (freshBalance <= 0) {
+        status = "skipped";
+        errorMessage = "No outstanding balance — reminder skipped";
+      } else {
+        fee.amount = freshBalance;
       if (channel === "sms") {
         if (!c.msg91AuthKey)   { errorMessage = "Missing MSG91 Auth Key"; }
         else if (!c.msg91SenderId) { errorMessage = "Missing MSG91 Sender ID"; }
@@ -795,6 +920,7 @@ export async function runDunningForSingleFee(
           status = "sent";
         }
       }
+      }
     } catch (err) {
       status = "failed";
       errorMessage = String(err);
@@ -834,8 +960,9 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
     return;
   }
 
-  const rows = await fetchFeeRows(cfg.schoolId, ["Due", "Overdue"], sessionId);
+  const rows = await fetchFeeRows(cfg.schoolId, null, sessionId);
   if (rows.length === 0) return;
+  const initialBalances = await loadOutstandingAmounts(cfg.schoolId, sessionId, rows.map(row => row.feeId));
 
   let tmap: TemplateMap = { sms: {}, email: {} };
   try { tmap = await loadTemplates(cfg.schoolId); } catch { /* use defaults */ }
@@ -851,7 +978,7 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
       eq(dunningLog.status,   "sent"),
       inArray(dunningLog.feeRecordId, feeIds),
     ));
-  const sentSet = new Set(existingLogs.map(l => `${l.feeRecordId}|${l.channel}|${l.stage}`));
+  const sentSet = new Set(existingLogs.map(l => dunningAttemptKey(l.feeRecordId, l.channel, l.stage)));
 
   const channels: Channel[] = [];
   if (cfg.smsEnabled)   channels.push("sms");
@@ -863,8 +990,10 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
     // missed in the past CATCHUP_DAYS days that has not been successfully sent.
     const stage = getStageWithCatchup(String(row.dueDate));
     if (!stage) continue;
+    const initialBalance = initialBalances.get(row.feeId) ?? 0;
+    if (initialBalance <= 0) continue;
 
-    const totalAmount = (row.amount ?? 0) + (row.lateFeeAmount ?? 0);
+    const totalAmount = initialBalance;
     const fee: FeeForDunning = {
       feeId:        row.feeId,        schoolId:     row.schoolId,
       studentId:    row.studentId,    studentName:  row.studentName,
@@ -878,43 +1007,51 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
     // ── Race-condition guard ─────────────────────────────────────────────────
     // Re-check status immediately before sending. The student may have paid
     // between the bulk SELECT and now.
-    const freshRow = await db
-      .select({ status: feeRecords.status })
-      .from(feeRecords)
-      .where(eq(feeRecords.id, fee.feeId))
-      .limit(1);
+    const freshRow = await db.select({ id: feeRecords.id })
+      .from(feeRecords).where(and(
+        eq(feeRecords.id, fee.feeId),
+        eq(feeRecords.schoolId, cfg.schoolId),
+        eq(feeRecords.sessionId, sessionId),
+      )).limit(1);
 
     if (!freshRow[0]) {
       // Hard-deleted between SELECT and re-check — skip without log (FK would throw)
       log(`fee #${fee.feeId} (${fee.studentName}) deleted — skipping`);
       continue;
     }
-    const freshStatus = freshRow[0].status;
-    if (freshStatus === "Paid") {
-      log(`fee #${fee.feeId} (${fee.studentName}) now ${freshStatus} — skipping`);
+    const freshBalance = (await loadOutstandingAmounts(cfg.schoolId, sessionId, [fee.feeId])).get(fee.feeId) ?? 0;
+    if (freshBalance <= 0) {
+      log(`fee #${fee.feeId} (${fee.studentName}) has no outstanding balance — skipping`);
       for (const channel of channels) {
-        const key = `${fee.feeId}|${channel}|${stage}`;
-        if (sentSet.has(key)) continue;
+        const key = dunningAttemptKey(fee.feeId, channel, stage);
+        if (isAutomaticDunningDuplicate(sentSet, fee.feeId, channel, stage)) continue;
         await db.insert(dunningLog).values({
           schoolId: cfg.schoolId, feeRecordId: fee.feeId, channel, stage,
           status: "skipped",
-          errorMessage: `skipped — ${freshStatus.toLowerCase()} after job queued`,
+          errorMessage: "skipped — no outstanding balance after job queued",
           recipient: null, studentName: fee.studentName,
         });
       }
       continue;
     }
+    fee.amount = freshBalance;
     // ────────────────────────────────────────────────────────────────────────
 
     for (const channel of channels) {
-      const key = `${fee.feeId}|${channel}|${stage}`;
-      if (sentSet.has(key)) continue;
+      const key = dunningAttemptKey(fee.feeId, channel, stage);
+      if (isAutomaticDunningDuplicate(sentSet, fee.feeId, channel, stage)) continue;
 
-      let status: "sent" | "failed" = "failed";
+    let status: "sent" | "failed" | "skipped" = "failed";
       let errorMessage: string | undefined;
       let recipient: string | undefined;
 
       try {
+        const latestBalance = (await loadOutstandingAmounts(cfg.schoolId, sessionId, [fee.feeId])).get(fee.feeId) ?? 0;
+        if (latestBalance <= 0) {
+          status = "skipped";
+          errorMessage = "No outstanding balance — reminder skipped";
+        } else {
+          fee.amount = latestBalance;
         if (channel === "sms") {
           if (!cfg.msg91AuthKey)    { errorMessage = "Missing MSG91 Auth Key"; }
           else if (!cfg.msg91SenderId) { errorMessage = "Missing MSG91 Sender ID"; }
@@ -955,6 +1092,7 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
             );
             status = "sent";
           }
+        }
         }
       } catch (err) {
         status = "failed";

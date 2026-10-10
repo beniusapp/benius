@@ -5227,7 +5227,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [synced,            setSynced]             = useState(false);
 
   // Test notification state
-  const [testChannel,  setTestChannel]  = useState<"sms" | "email" | "webhook">("webhook");
+  const [testChannel,  setTestChannel]  = useState<"sms" | "email">("sms");
   const [testRecipient,setTestRecipient]= useState("");
   const [testOpen,     setTestOpen]     = useState(false);
 
@@ -5554,11 +5554,10 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             {/* Channel picker */}
             <div>
               <p className="text-white/50 text-xs mb-2">Choose channel</p>
-              <div className="grid grid-cols-3 gap-2">
-                {(["webhook", "sms", "email"] as const).map(ch => {
-                  const labels: Record<string, string> = { webhook: "Webhook", sms: "SMS", email: "Email" };
+              <div className="grid grid-cols-2 gap-2">
+                {(["sms", "email"] as const).map(ch => {
+                  const labels: Record<string, string> = { sms: "SMS", email: "Email" };
                   const icons: Record<string, React.ReactNode> = {
-                    webhook: <Zap className="w-3.5 h-3.5" />,
                     sms: <MessageSquare className="w-3.5 h-3.5" />,
                     email: <Mail className="w-3.5 h-3.5" />,
                   };
@@ -5572,32 +5571,13 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               </div>
             </div>
 
-            {/* Webhook instructions */}
-            {testChannel === "webhook" && (
-              <div className="p-3 rounded-lg bg-cyan-900/20 border border-cyan-700/30 space-y-1.5">
-                <p className="text-cyan-300 text-xs font-semibold">No API keys needed!</p>
-                <p className="text-white/50 text-xs">
-                  1. Open <span className="text-cyan-400 font-medium">webhook.site</span> in a new tab — you get a free unique URL instantly.<br />
-                  2. Copy that URL and paste it below.<br />
-                  3. Click Send — the server will POST the notification payload to your URL.<br />
-                  4. Watch it arrive live at webhook.site.
-                </p>
-              </div>
-            )}
-
             {/* Recipient input */}
             <div>
               <p className="text-white/50 text-xs mb-1">
-                {testChannel === "webhook" ? "Webhook URL (from webhook.site)" :
-                 testChannel === "email"   ? "Email address" :
-                                             "Phone number (91XXXXXXXXXX)"}
+                {testChannel === "email" ? "Email address" : "Phone number (91XXXXXXXXXX)"}
               </p>
               <input value={testRecipient} onChange={e => setTestRecipient(e.target.value)}
-                placeholder={
-                  testChannel === "webhook" ? "https://webhook.site/your-unique-id" :
-                  testChannel === "email"   ? "test@example.com" :
-                                              "91XXXXXXXXXX"
-                }
+                placeholder={testChannel === "email" ? "test@example.com" : "91XXXXXXXXXX"}
                 className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
             </div>
 
@@ -5624,6 +5604,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </Button>
           )}
         </div>
+        <p className="text-white/40 text-xs">“Sent” means the provider accepted the request; it does not confirm delivery to the recipient.</p>
 
         {/* Stage tabs */}
         <div className="flex gap-1 flex-wrap">
@@ -5764,11 +5745,18 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     <td className="px-3 py-2 text-white/50 truncate max-w-[120px]">{l.recipient ?? "—"}</td>
                     <td className="px-3 py-2 text-white/40">{fmtDateTime(l.sentAt)}</td>
                     <td className="px-3 py-2">
-                      {l.status === "sent" ? (
-                        <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> sent</span>
-                      ) : (
-                        <span className="text-red-400 flex items-center gap-1" title={l.errorMessage ?? ""}><AlertTriangle className="w-3 h-3" /> failed</span>
-                      )}
+                      <span
+                        className={`flex items-center gap-1 ${
+                          l.status === "sent" ? "text-emerald-400" :
+                          l.status === "failed" ? "text-red-400" :
+                          l.status === "skipped" ? "text-amber-300" :
+                          l.status === "simulated" ? "text-sky-300" : "text-white/50"
+                        }`}
+                        title={l.errorMessage ?? ""}
+                      >
+                        {l.status === "sent" ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                        {l.status}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -7226,16 +7214,24 @@ function AgingDefaultersDrawer({
     });
   }, [students, filterClass, filterFeeType]);
 
-  async function sendReminder(student: AgingStudent) {
+  async function sendReminder(student: AgingStudent, confirmResend = false) {
     setSendingId(student.fee_record_id);
     try {
       const r = await sessionFetch("/api/admin/fees/dunning-trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feeRecordId: student.fee_record_id }),
+        body: JSON.stringify({ feeRecordId: student.fee_record_id, confirmResend }),
       });
       const body = await r.json();
       if (!r.ok) {
+        if (r.status === 409 && body.requiresConfirmation) {
+          const channels = (body.channels as string[] | undefined)?.join(", ") ?? "a configured channel";
+          const accepted = window.confirm(
+            `A successful ${channels} reminder already exists for ${body.stage}. Send it again? This creates another external notification and records a new attempt.`,
+          );
+          if (accepted) await sendReminder(student, true);
+          return;
+        }
         toast({ title: "Failed", description: body.message ?? "Could not send reminder", variant: "destructive" });
         return;
       }

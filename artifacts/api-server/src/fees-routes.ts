@@ -31,6 +31,7 @@ import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 import { isPortalPayment, normalizePaymentMethod } from "@shared/payment-method";
+import { isDunningTestChannel } from "./dunning";
 import {
   isValidOfflineCorrectionDate,
   normalizeOptionalOfflineCorrectionDate,
@@ -6411,39 +6412,16 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const { channel, recipient } = req.body as { channel: string; recipient: string };
     if (!channel || !recipient) return res.status(400).json({ message: "channel and recipient required" });
+    if (channel === "webhook") {
+      return res.status(410).json({ message: "Webhook test is disabled until trusted destinations can be safely configured." });
+    }
+    if (!isDunningTestChannel(channel)) {
+      return res.status(400).json({ message: "channel must be sms or email" });
+    }
 
     const testText = "This is a test notification from your school fee management system.";
 
     try {
-      // ── Webhook Capture (no saved config needed) ─────────────────────────
-      if (channel === "webhook") {
-        if (!recipient.startsWith("http")) return res.status(400).json({ message: "recipient must be a valid URL" });
-        const payload = {
-          _source: "benius_fee_dunning_test",
-          channel: "webhook",
-          timestamp: new Date().toISOString(),
-          sample_notification: {
-            studentName: "Test Student",
-            guardianName: "Test Parent",
-            feeName: "Tuition Fee",
-            amount: 5000,
-            dueDate: todayInIST(),
-            stage: "D+0",
-            message: testText,
-          },
-        };
-        const r = await fetch(recipient, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!r.ok) {
-          const body = await r.text();
-          return res.status(400).json({ message: `Webhook error ${r.status}: ${body.substring(0, 200)}` });
-        }
-        return res.json({ ok: true, message: `Payload posted to ${recipient}` });
-      }
-
       const cfg = await storage.getNotificationConfig(schoolId);
       if (!cfg) return res.status(400).json({ message: "No notification config saved yet" });
 
@@ -6498,8 +6476,6 @@ export function registerFeesRoutes(app: Express) {
             return res.status(400).json({ message: `SendGrid error: ${body.substring(0, 200)}` });
           }
         }
-      } else {
-        return res.status(400).json({ message: "channel must be sms, email, or webhook" });
       }
       res.json({ ok: true });
     } catch (err) {
@@ -6629,7 +6605,7 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/dunning-trigger", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const { feeRecordId } = req.body as { feeRecordId: number };
+    const { feeRecordId, confirmResend } = req.body as { feeRecordId: number; confirmResend?: boolean };
     if (!feeRecordId || isNaN(Number(feeRecordId))) {
       return res.status(400).json({ message: "feeRecordId is required" });
     }
@@ -6651,7 +6627,15 @@ export function registerFeesRoutes(app: Express) {
         return res.status(404).json({ message: "Fee record not found in the selected academic session." });
       }
       const { runDunningForSingleFee } = await import("./dunning");
-      const result = await runDunningForSingleFee(schoolId, Number(feeRecordId), sessionFilter);
+      const result = await runDunningForSingleFee(schoolId, Number(feeRecordId), sessionFilter, confirmResend === true);
+      if (result.requiresConfirmation) {
+        return res.status(409).json({
+          requiresConfirmation: true,
+          stage: result.stage,
+          channels: result.duplicateChannels ?? [],
+          message: `A successful ${result.duplicateChannels?.join(", ")} reminder already exists for stage ${result.stage}. Confirm to resend.`,
+        });
+      }
       await appendFeeAudit({
         schoolId,
         actor: await resolveFeeAuditActor(req, schoolId),

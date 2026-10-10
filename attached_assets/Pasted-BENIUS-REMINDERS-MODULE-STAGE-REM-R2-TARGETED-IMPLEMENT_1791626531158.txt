@@ -1,0 +1,77 @@
+BENIUS — REMINDERS MODULE
+STAGE REM-R2: TARGETED IMPLEMENTATION
+
+The read-only Reminders audit is complete.
+
+Implement only the confirmed corrections below. Do not rebuild the module or perform another broad audit.
+
+1. OUTSTANDING BALANCE
+
+- Inspect and reuse the existing authoritative payment/refund-aware outstanding-balance logic where appropriate.
+- Automatic reminders, manual reminders and simulation must use the same outstanding-balance calculation.
+- Account for valid payments, processed refunds and applicable late fees without double counting.
+- Recheck the balance immediately before actual sending.
+- Do not send a payment-demand reminder when the actual outstanding balance is zero or negative.
+- Ensure partially paid invoices receive reminders for the remaining balance where eligible.
+- Do not rely exclusively on invoice status if it conflicts with actual outstanding balance.
+- Preserve existing financial formulas, transaction records and ledger behavior.
+
+2. MANUAL REMINDER DUPLICATES
+
+- Preserve the Principal's ability to intentionally resend a reminder.
+- Before resending, display a clear warning if a previous successful send exists for that invoice/channel/stage.
+- Require explicit confirmation for the repeated send.
+- Preserve auditable history of every attempt.
+- Do not silently change the automatic reminder deduplication rules.
+
+3. WEBHOOK SECURITY
+
+- Prevent arbitrary webhook destinations and server-side request forgery.
+- Restrict webhook test destinations to explicitly trusted HTTPS endpoints.
+- Reject localhost, loopback, private/internal IP addresses, link-local and cloud metadata destinations, including through redirects or DNS resolution.
+- If a safe trusted-destination policy cannot be established, disable the webhook test feature safely rather than allowing arbitrary URLs.
+- Do not change the working SMS, WhatsApp or email integrations unnecessarily.
+
+4. REMINDER STATUS DISPLAY
+
+- Display sent, failed, skipped and simulated statuses distinctly.
+- Explain that sent means provider-accepted, not necessarily delivered.
+- Do not alter existing history records.
+
+5. FOCUSED TESTS
+
+Add side-effect-free tests covering:
+- Fully unpaid invoices.
+- Partially paid invoices.
+- Processed refunds.
+- Zero outstanding balance.
+- Late-fee handling.
+- School and Academic Session isolation.
+- Automatic deduplication.
+- Manual resend confirmation.
+- Webhook destination restrictions.
+- IST reminder stages and retry behavior.
+
+STRICT RULES:
+
+- Development source changes only.
+- Do not send real SMS, email or WhatsApp messages.
+- Do not run simulations that write database records.
+- Do not trigger scheduled jobs.
+- Do not modify existing invoices, payments, refunds or reminder history.
+- Do not change Financial Analytics, Ledger calculations or Fee Structures.
+- Do not change Production, deploy, publish or run database migrations.
+- Do not work on Mobile.
+- Preserve strict tenant isolation and Academic Session ownership.
+
+Run focused tests and existing build checks where available.
+
+REPORT:
+
+A. Files changed.
+B. Fixes completed.
+C. Test results.
+D. Any remaining blockers.
+E. Whether Reminders is ready for one controlled Development verification.
+
+Keep the report concise. Do not start another audit stage.
