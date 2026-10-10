@@ -1,0 +1,157 @@
+BENIUS — ADMIN DASHBOARD
+
+STAGE AN-3: RED-DOT NOTIFICATIONS, SUBMODULE COVERAGE AND CLICK BEHAVIOR
+
+MODE: STRICTLY READ-ONLY — NO CODE CHANGES
+
+OBJECTIVE:
+
+Verify exactly which Admin Portal modules and submodules have red-dot or numeric notification badges, how they work, and how they connect to Action Required.
+
+TARGET MODULES:
+
+1. COMPLAINT HUB
+   - Private Teacher Messages / Private Complaints
+   - Student & Staff Grievances
+   - Escalated Reports / Escalated Complaints
+
+2. NOTICEBOARD
+   - All existing Noticeboard submodules and notification-related features
+
+3. APPROVAL CENTER
+   - Gallery Hub
+   - E-Book Library
+
+4. LEAVE REQUESTS
+   - Teacher Leave
+   - Student Leave
+   - Leave Approval History
+
+Use actual implemented module and submodule names when they differ from the names above.
+
+PART A — VERIFY PARENT AND SUBMODULE BADGES
+
+For each target module and submodule, report:
+
+- Does a red-dot or numeric badge exist on the parent module?
+- Does a badge exist on its sidebar/tile submodule?
+- Does a badge exist inside the opened submodule?
+- What exact event triggers it?
+- What API/query supplies it?
+- Is it a pending-action count or an unread/unseen notification?
+- Does it disappear when clicked?
+- Does it disappear only after the underlying action is resolved?
+
+Do not confuse an internal page count with a navigation notification badge.
+
+PART B — CLICK-TO-DISMISS REQUIREMENT
+
+The desired behavior is:
+
+When the Admin clicks a module or submodule notification, the corresponding unread red dot should disappear from that submodule and its parent, provided no other unread notifications remain.
+
+IMPORTANT:
+
+- Clicking must NOT approve leave.
+- Clicking must NOT resolve complaints.
+- Clicking must NOT approve Gallery/E-Books.
+- Clicking must NOT delete records.
+- Clicking must NOT alter pending-action counts.
+
+Check whether BENIUS already stores unread/seen state.
+
+If not, explain the smallest safe approach to introduce click-to-dismiss red dots separately from actionable pending-work counts.
+
+Also verify what happens when a new pending item arrives after the Admin has already opened that module.
+
+PART C — ACTION REQUIRED
+
+Verify the Stage AN-2 implementation.
+
+Check:
+
+- Teacher Leave → correct submodule.
+- Student Leave → correct submodule.
+- Gallery Hub → correct submodule.
+- E-Book Library → correct submodule.
+- Complaints → correct owning module/submodule.
+
+For each source, verify whether Action Required has an independent actionable count and whether clicking the item navigates correctly.
+
+IMPORTANT:
+
+Action Required should continue displaying unresolved work even after a notification is marked seen.
+
+Do not clear Action Required merely because the Admin opened a module.
+
+PART D — COMPLAINT SUBMODULE BREAKDOWN
+
+Specifically verify whether:
+
+- Private Teacher Messages
+- Student & Staff Grievances
+- Escalated Reports
+
+have independent notification sources and independent counts.
+
+Check whether the existing Complaint Hub parent count includes all three correctly.
+
+Identify whether each complaint type can navigate to its corresponding submodule.
+
+PART E — NOTICEBOARD
+
+Determine whether Noticeboard has any existing:
+
+- Unread notice indicators.
+- New-notice notifications.
+- Pending approval actions.
+- Scheduled or unpublished notices requiring Admin attention.
+
+Do not recommend a notification simply because a notice exists.
+
+Distinguish informational unread notices from genuine Admin actions.
+
+PART F — OTHER MODULES
+
+Inspect the actual Admin Dashboard navigation and identify every other module with:
+
+- Parent red-dot or numeric badges.
+- Submodule navigation badges.
+- Internal pending counters that could qualify for notifications.
+
+Include Exam Controller and ID Card Generator as candidates, but do not implement notifications for them.
+
+PART G — REPORT
+
+Provide these tables:
+
+TABLE 1:
+Parent Module | Submodule | Parent Badge | Submodule Badge | Internal Badge | Trigger | Clears on Click?
+
+TABLE 2:
+Action Required Source | Count Condition | Destination | Clears on Click? | Clears on Resolution?
+
+TABLE 3:
+Other Admin Modules | Existing Notification | Missing Candidate | Recommendation
+
+Then explain:
+
+A. Confirmed existing notification behavior.
+B. Missing parent/submodule red dots.
+C. Whether click-to-dismiss can be implemented without database changes.
+D. How to preserve Action Required separately.
+E. Smallest safe implementation plan.
+F. File and line references for findings.
+
+STRICT RULES:
+
+- READ-ONLY SOURCE INSPECTION ONLY.
+- Do not modify code.
+- Do not change notification or database records.
+- Do not mark anything read, approved or resolved.
+- Do not restart workflows.
+- Do not deploy or publish.
+- Do not work on Mobile.
+- Do not perform unrelated audits.
+
+Stop after reporting and wait for approval.
