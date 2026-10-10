@@ -19,6 +19,7 @@ export default defineConfig({
       "src/pages/__tests__/student-dashboard-navigation.test.tsx",
       "src/pages/__tests__/student-field-limits.test.ts",
       "src/pages/__tests__/portal-upload-limits.test.ts",
+      "src/lib/__tests__/admin-session-view.test.ts",
     ],
     testTimeout: 8000,
   },

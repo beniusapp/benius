@@ -1,0 +1,82 @@
+BENIUS — CRITICAL LOGIN FIX: STALE ACADEMIC SESSION HEADER
+
+MODE: IMPLEMENT TARGETED SECURITY FIX IN DEVELOPMENT ONLY.
+
+ROOT CAUSE CONFIRMED BY READ-ONLY AUDIT:
+
+The shared frontend API helper can attach x-view-session-id to login and PIN requests.
+
+The backend global archived-session guard can reject those requests with HTTP 403 before authentication.
+
+OBJECTIVE:
+
+Ensure Principal, Teacher, Student and Principal PIN authentication work independently of stale Academic Session selections.
+
+REQUIRED CHANGES:
+
+1. FRONTEND
+File: artifacts/benius-web/src/lib/queryClient.ts
+
+- Do not attach x-view-session-id to authentication requests or Principal PIN verification requests.
+- Use an explicit, narrowly scoped authentication endpoint policy.
+- Preserve session headers for legitimate academic-session operations.
+- Do not globally clear the selected Academic Session.
+- Do not change the existing login credentials, cookies or authentication mechanism.
+
+2. BACKEND
+File: artifacts/api-server/src/routes/routes.ts
+
+- Ensure the archived-session write guard does not block the exact authentication and PIN endpoints that must operate independently of academic view-session selection.
+- Use explicit HTTP method and exact route matching.
+- Do not exempt all /api routes, entire portals or unrelated mutation endpoints.
+- Preserve normal authentication, authorization, CSRF and rate-limiting protections.
+- Do not weaken archived-session restrictions on academic operations.
+
+3. SECURITY
+
+- Archived Academic Sessions must remain read-only.
+- Active-session academic writes must retain their existing validation.
+- School/tenant isolation must remain unchanged.
+- An invalid or cross-school session header must not bypass academic write protections.
+- Login and PIN requests must not rely on the browser's previously selected Academic Session.
+
+4. REGRESSION TESTS
+
+Verify:
+- Principal login succeeds with valid credentials despite a stale archived-session selection.
+- Teacher login is not blocked by the archived-session guard.
+- Student login is not blocked by the archived-session guard.
+- Principal PIN verification is not blocked by the archived-session guard.
+- Invalid credentials still fail.
+- Incorrect PIN still fails.
+- Archived-session academic mutations remain blocked.
+- Cross-school session IDs remain blocked for academic writes.
+- Unrelated API mutations receive no new exemption.
+- Authentication cookies and session handling remain unchanged.
+
+Do not hardcode credentials or PINs in tests.
+
+5. SAFETY
+
+- Change only the necessary frontend/backend files and focused tests.
+- No database changes or migrations.
+- No Academic Session status changes.
+- No Production or Mobile changes.
+- No deployment or publishing.
+- No service restart without approval.
+- Do not modify unrelated features.
+
+6. VERIFICATION
+
+Run focused security/authentication regression tests, API/Web builds and git diff --check.
+
+FINAL REPORT:
+
+- Root cause addressed: YES/NO
+- Principal, Teacher, Student and PIN paths covered: YES/NO
+- Archived-session academic protection preserved: YES/NO
+- Tests/build results
+- Files changed
+- Development restart required: YES/NO
+
+Implement the targeted fix, then STOP and wait for approval before restarting.

@@ -330,6 +330,12 @@ function parseDate(value: string): string | null {
 }
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const SESSION_INDEPENDENT_AUTH_REQUESTS = new Set([
+  "POST /api/login",
+  "POST /api/teacher-login",
+  "POST /api/student-login",
+  "POST /api/admin/verify-pin",
+]);
 
 /**
  * requireSchoolId — middleware for authenticated admin/teacher route groups.
@@ -431,7 +437,9 @@ async function feeRecordWriteBlock(
  *   Read-only export transports and the explicitly school-global External
  *   Portal configuration routes are exempt. The latter have their own
  *   admin/password/tenant authorization in fees-routes and never operate on
- *   academic-session financial data.
+ *   academic-session financial data. Exact login and Principal PIN POST routes
+ *   also skip only the archive write check because authentication is not
+ *   scoped to the browser's selected academic session.
  *
  * Fails closed on database errors for a selected-session mutation. Financial
  * history must never be changed when archive status cannot be verified.
@@ -456,6 +464,9 @@ export async function checkSessionContext(
     req.path === "/api/admin/fees/external-settings/portal" ||
     req.path === "/api/admin/fees/external-portal/signature"
   );
+  const isSessionIndependentAuthRequest = SESSION_INDEPENDENT_AUTH_REQUESTS.has(
+    `${req.method} ${req.path}`,
+  );
 
   // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
   // This allows any downstream route handler — GET or mutation — to read
@@ -474,6 +485,7 @@ export async function checkSessionContext(
     MUTATION_METHODS.has(req.method) &&
     !isReadOnlyTransactionExport &&
     !isExternalPortalGlobalMutation &&
+    !isSessionIndependentAuthRequest &&
     (req as any).viewSessionId &&
     req.session?.schoolId
   ) {

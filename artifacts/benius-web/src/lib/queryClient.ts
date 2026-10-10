@@ -53,6 +53,17 @@ export function sessionFetchForViewSession(
 }
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const SESSION_INDEPENDENT_AUTH_REQUESTS = new Set([
+  "POST /api/login",
+  "POST /api/teacher-login",
+  "POST /api/student-login",
+  "POST /api/admin/verify-pin",
+]);
+
+function shouldAttachViewSessionId(method: string, url: string): boolean {
+  const pathname = new URL(url, "http://benius.local").pathname;
+  return !SESSION_INDEPENDENT_AUTH_REQUESTS.has(`${method.toUpperCase()} ${pathname}`);
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -83,10 +94,9 @@ export async function apiRequest(
 
   if (data) headers["Content-Type"] = "application/json";
 
-  // Always send x-view-session-id on every outgoing request so the backend
-  // checkSessionContext middleware can validate the session context regardless
-  // of HTTP method.
-  if (_viewSessionId !== null) {
+  // Authentication and PIN verification do not operate on the selected
+  // academic session. Do not let a stale selection affect those requests.
+  if (_viewSessionId !== null && shouldAttachViewSessionId(method, url)) {
     headers["x-view-session-id"] = String(_viewSessionId);
   }
 

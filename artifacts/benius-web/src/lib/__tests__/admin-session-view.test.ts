@@ -7,7 +7,7 @@ import {
   saveAdminViewSessionId,
   updateAdminSessionList,
 } from "@/lib/admin-session-view";
-import { sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
+import { apiRequest, sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
 
 const archived = { id: 101, isActive: false, sessionName: "2027–2028" };
 const active = { id: 202, isActive: true, sessionName: "2028–2029" };
@@ -107,6 +107,38 @@ describe("Admin Portal academic-session selection", () => {
       { url: "/api/attendance/daily-summary?session=101", header: "101" },
       { url: "/api/attendance/daily-summary?session=202", header: "202" },
     ]);
+  });
+
+  it("omits view-session headers only for exact authentication and Principal PIN requests", async () => {
+    const requests: Array<{ url: string; method: string; header: string | null; credentials: RequestCredentials | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      requests.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        header: new Headers(init?.headers).get("x-view-session-id"),
+        credentials: init?.credentials,
+      });
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }));
+
+    setViewSessionId(101);
+    for (const url of [
+      "/api/login",
+      "/api/teacher-login",
+      "/api/student-login",
+      "/api/admin/verify-pin",
+    ]) {
+      await apiRequest("POST", url, {});
+    }
+    await apiRequest("POST", "/api/admin/fees/payments", {});
+    await apiRequest("PUT", "/api/login", {});
+    await apiRequest("POST", "/api/login/", {});
+
+    expect(requests.slice(0, 4).map(request => request.header)).toEqual([null, null, null, null]);
+    expect(requests.slice(0, 4).map(request => request.credentials)).toEqual([
+      "include", "include", "include", "include",
+    ]);
+    expect(requests.slice(4).map(request => request.header)).toEqual(["101", "101", "101"]);
   });
 });
 
