@@ -33,6 +33,7 @@ import {
   academicSessions, dunningTemplates, dunningJobStatus, paymentRecords, refunds,
 } from "@workspace/db";
 import { eq, and, inArray, or, sum, isNotNull, sql } from "drizzle-orm";
+import { assertReminderDeliveryEnabled, isReminderDeliveryEnabled } from "./reminder-safety";
 
 function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
 
@@ -291,6 +292,7 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
 // ─── Provider send functions ──────────────────────────────────────────────────
 
 async function sendSms(authKey: string, senderId: string, phone: string, text: string): Promise<void> {
+  assertReminderDeliveryEnabled();
   const mobile = normalizePhone(phone);
   if (!mobile) throw new Error(`SMS HTTP 400: Invalid phone number after normalisation — "${phone.trim()}"`);
 
@@ -327,6 +329,7 @@ async function sendWhatsapp(
   authKey: string, waNumber: string, templateName: string,
   phone: string, f: FeeForDunning, stage: Stage,
 ): Promise<void> {
+  assertReminderDeliveryEnabled();
   const mobile = normalizePhone(phone);
   if (!mobile) throw new Error(`WhatsApp HTTP 400: Invalid phone number after normalisation — "${phone.trim()}"`);
 
@@ -395,6 +398,7 @@ async function sendEmail(
   toEmail: string, toName: string, subject: string, html: string,
   mailtrapInboxId?: string | null,
 ): Promise<void> {
+  assertReminderDeliveryEnabled();
   // Pre-call validation — fail fast with a descriptive error, no API round-trip
   if (!fromEmail || !fromEmail.includes("@")) {
     throw new Error(`Email HTTP 400: Missing or invalid From Email (${provider}) — set sendgridFromEmail in Notification Settings`);
@@ -647,6 +651,7 @@ async function setJobStatus(schoolId: number, isRunning: boolean): Promise<void>
 // ─── Main dunning job ─────────────────────────────────────────────────────────
 
 export async function runDunningJob(): Promise<void> {
+  if (!isReminderDeliveryEnabled()) return;
   const client = await pool.connect();
   let locked = false;
   try {
@@ -697,6 +702,7 @@ export async function runDunningJob(): Promise<void> {
  * - Logs status="simulated" — never blocks real sentSet dedup
  */
 export async function runDunningSimulation(schoolId: number, sessionId?: number | null): Promise<SimulationResult> {
+  assertReminderDeliveryEnabled();
   const rows = await fetchFeeRows(schoolId, null, sessionId);
   const session = sessionId ?? (await db.select({ id: academicSessions.id }).from(academicSessions)
     .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true))).limit(1))[0]?.id;
@@ -788,6 +794,7 @@ export async function runDunningForSingleFee(
   sessionId?: number | null,
   confirmResend = false,
 ): Promise<{ sent: string[]; failed: string[]; skipped: string[]; requiresConfirmation?: boolean; duplicateChannels?: string[]; stage?: Stage }> {
+  assertReminderDeliveryEnabled();
   const sent: string[] = [], failed: string[] = [], skipped: string[] = [];
   const conditions = [
     eq(feeRecords.id, feeRecordId),
@@ -949,6 +956,7 @@ export async function runDunningForSingleFee(
  * that want to test business logic without the advisory lock layer.
  */
 export async function processDunningForSchool(cfg: typeof notificationConfig.$inferSelect): Promise<void> {
+  if (!isReminderDeliveryEnabled()) return;
   // Always scope to the active session — archived sessions never get reminders
   const activeSession = await db.select({ id: academicSessions.id })
     .from(academicSessions)

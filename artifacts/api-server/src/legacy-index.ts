@@ -10,6 +10,7 @@ import { recalculateLateFees } from "./late-fee-engine";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 import { formatTimeIST, SCHOOL_TIME_ZONE } from "@shared/ist-time";
+import { isReminderDeliveryEnabled } from "./reminder-safety";
 import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 import { enforceSessionRevocation } from "./session-revocation";
@@ -1397,14 +1398,18 @@ app.use((req, res, next) => {
   // ===== HOURLY DUNNING JOB (SMS / WhatsApp / Email) =====
   // Runs at :05 past every hour in the application's business timezone.
   // Idempotent — skips already-sent (fee, channel, stage) triplets.
-  const { runDunningJob } = await import("./dunning");
-  cron.schedule("5 * * * *", async () => {
-    log("Dunning job starting…", "cron");
-    try { await runDunningJob(); }
-    catch (err) { log(`Dunning job error: ${String(err)}`, "cron"); }
-  }, { timezone: SCHOOL_TIME_ZONE });
-  // Also run once on startup to catch any fees that fell due during downtime
-  runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
+  if (isReminderDeliveryEnabled()) {
+    const { runDunningJob } = await import("./dunning");
+    cron.schedule("5 * * * *", async () => {
+      log("Dunning job starting…", "cron");
+      try { await runDunningJob(); }
+      catch (err) { log(`Dunning job error: ${String(err)}`, "cron"); }
+    }, { timezone: SCHOOL_TIME_ZONE });
+    // Also run once on startup to catch any fees that fell due during downtime.
+    runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
+  } else {
+    log("Development reminder safety mode enabled; startup and hourly processing are disabled.", "cron");
+  }
 
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 Asia/Kolkata every night. Marks all "Due" fee records whose

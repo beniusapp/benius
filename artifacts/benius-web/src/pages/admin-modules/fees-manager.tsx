@@ -267,6 +267,7 @@ interface DunningJobStatusData {
   isRunning: boolean;
   startedAt: string | null;
   lastCompletedAt: string | null;
+  deliveryEnabled?: boolean;
 }
 
 interface AcademicSession {
@@ -5262,7 +5263,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     staleTime: 0,
     refetchInterval: 5_000,
   });
-  const jobRunning = jobStatus?.isRunning ?? false;
+  const jobRunning = jobStatus?.deliveryEnabled === false ? false : (jobStatus?.isRunning ?? false);
 
   useEffect(() => {
     if (cfg !== undefined && !synced) {
@@ -5403,12 +5404,24 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           <p className="text-white font-semibold">Automatic Reminder System</p>
           <p className="text-white/40 text-xs mt-0.5">Reminders are processed automatically every hour based on the configured schedule. No manual action is required.</p>
         </div>
-        {anyEnabled && (
+        {anyEnabled && jobStatus?.deliveryEnabled !== false && (
           <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 px-2.5 py-1 rounded-full">
             <Zap className="w-3 h-3" /> Active
           </span>
         )}
       </div>
+
+      {jobStatus?.deliveryEnabled === false && (
+        <div className="rounded-lg border border-amber-700/40 bg-amber-900/15 px-3 py-2.5 text-amber-200 text-xs">
+          <p className="font-semibold">Development safety mode is on</p>
+          <p className="mt-1 text-amber-100/70">
+            Automatic processing, manual reminders, test sends, and simulations are disabled. Reminder settings and history remain available to review.
+          </p>
+          <p className="mt-1 text-amber-100/50">
+            Controlled by BENIUS_DEV_REMINDERS_DISABLED; unset or true keeps sending disabled.
+          </p>
+        </div>
+      )}
 
       {/* ── Dunning job status row ── */}
       <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs ${
@@ -5422,7 +5435,9 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             : <Clock className="w-3.5 h-3.5 text-white/30" />
           }
           <span className="font-medium">
-            {jobRunning
+            {jobStatus?.deliveryEnabled === false
+              ? "Development safety mode — reminder processing disabled"
+              : jobRunning
               ? "Automatic check running…"
               : jobStatus?.lastCompletedAt
                 ? `Last automatic check: ${fmtDateTime(jobStatus.lastCompletedAt)} IST`

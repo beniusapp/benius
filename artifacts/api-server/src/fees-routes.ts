@@ -32,6 +32,7 @@ import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-gu
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 import { isPortalPayment, normalizePaymentMethod } from "@shared/payment-method";
 import { isDunningTestChannel } from "./dunning";
+import { isReminderDeliveryEnabled, REMINDERS_DISABLED_MESSAGE } from "./reminder-safety";
 import {
   isValidOfflineCorrectionDate,
   normalizeOptionalOfflineCorrectionDate,
@@ -6382,9 +6383,12 @@ export function registerFeesRoutes(app: Express) {
         .where(eq(dunningJobStatus.schoolId, schoolId))
         .limit(1);
       if (rows.length === 0) {
-        return res.json({ isRunning: false, startedAt: null, lastCompletedAt: null });
+        return res.json({
+          isRunning: false, startedAt: null, lastCompletedAt: null,
+          deliveryEnabled: isReminderDeliveryEnabled(),
+        });
       }
-      return res.json(rows[0]);
+      return res.json({ ...rows[0], deliveryEnabled: isReminderDeliveryEnabled() });
     } catch (err) {
       return res.status(500).json({ message: String(err) });
     }
@@ -6393,6 +6397,7 @@ export function registerFeesRoutes(app: Express) {
   // ── Admin: Dunning Simulation ─────────────────────────────────────────────
   app.post("/api/admin/fees/dunning-simulate", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    if (!isReminderDeliveryEnabled()) return res.status(423).json({ message: REMINDERS_DISABLED_MESSAGE });
     const schoolId = req.session.schoolId!;
     try {
       const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
@@ -6409,6 +6414,7 @@ export function registerFeesRoutes(app: Express) {
   // ── Admin: Test Notification ───────────────────────────────────────────────
   app.post("/api/admin/fees/notification-config/test", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    if (!isReminderDeliveryEnabled()) return res.status(423).json({ message: REMINDERS_DISABLED_MESSAGE });
     const schoolId = req.session.schoolId!;
     const { channel, recipient } = req.body as { channel: string; recipient: string };
     if (!channel || !recipient) return res.status(400).json({ message: "channel and recipient required" });
@@ -6604,6 +6610,7 @@ export function registerFeesRoutes(app: Express) {
   // Fires a dunning reminder for a single fee record (all enabled channels).
   app.post("/api/admin/fees/dunning-trigger", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    if (!isReminderDeliveryEnabled()) return res.status(423).json({ message: REMINDERS_DISABLED_MESSAGE });
     const schoolId = req.session.schoolId!;
     const { feeRecordId, confirmResend } = req.body as { feeRecordId: number; confirmResend?: boolean };
     if (!feeRecordId || isNaN(Number(feeRecordId))) {
