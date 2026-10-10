@@ -1,0 +1,82 @@
+BENIUS — STAGE SC-2D
+
+FINAL DEVELOPMENT DATABASE AND STARTUP READINESS CHECK
+
+MODE: READ-ONLY — NO CHANGES
+
+OBJECTIVE:
+
+Confirm the correct Development database and determine whether the API can safely start with startup maintenance disabled.
+
+1. DATABASE IDENTITY
+
+Inspect authorized Replit environment and resource metadata.
+
+Determine whether the Development API DATABASE_URL and Development SQL Console point to the same database.
+
+Do not expose passwords, connection strings, tokens, or other secrets.
+
+If identity cannot be confirmed from metadata, report BLOCKED.
+
+Do not connect to the database or execute SQL.
+
+2. REQUIRED STARTUP SCHEMA
+
+From the source code, identify the database tables and schema objects required by:
+
+- Session-store readiness checks.
+- Read-only schema validation.
+- Authentication initialization.
+
+Explain which requirements cannot be confirmed without an authorized read-only database check.
+
+3. STARTUP FLAGS
+
+Verify the expected Development configuration:
+
+BENIUS_DEV_STARTUP_MAINTENANCE_ENABLED must remain disabled.
+
+BENIUS_DEV_REMINDERS_DISABLED must remain true.
+
+BENIUS_DEV_OVERDUE_CHECK_DISABLED must remain true.
+
+BENIUS_STUDENT_COMPLAINT_READ_RECEIPTS_ENABLED must remain disabled.
+
+BENIUS_STUDENT_COMPLAINT_READ_RECEIPTS_MIGRATION_APPLIED must remain disabled.
+
+Inspect configuration metadata only where safely accessible.
+
+Do not modify environment variables.
+
+4. MIGRATION READINESS
+
+Confirm that migration 019 can be applied independently to the verified Development database.
+
+Do not execute the migration.
+
+5. FINAL VERDICT
+
+Report:
+
+A. Development database identity: VERIFIED / BLOCKED.
+B. Startup configuration: VERIFIED / BLOCKED.
+C. Required schema: VERIFIED / REQUIRES READ-ONLY DB CHECK.
+D. Migration 019 readiness: READY / BLOCKED.
+E. Safe restart readiness: READY / BLOCKED.
+F. Exact remaining actions, in order.
+
+STRICT RULES:
+
+- No code changes.
+- No database connections.
+- No SQL execution.
+- No migrations.
+- No environment changes.
+- No API restart.
+- No deployment.
+- No Production changes.
+- No Mobile work.
+
+Keep the report short.
+
+STOP after reporting.
