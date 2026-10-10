@@ -1,0 +1,347 @@
+# BENIUS — STAGE FS-R1
+## PRINCIPAL PORTAL → FEES & PAYMENTS → FEE STRUCTURES
+### ONE-TIME FUNCTIONAL, SECURITY & ACADEMIC SESSION AUDIT
+
+**MODE: STRICTLY READ-ONLY — NO IMPLEMENTATION AUTHORIZED**
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner wants to review and finish the **Principal Portal → Fees & Payments → Fee Structures** module without starting an endless audit cycle.
+
+This is ONE focused audit. Inspect the actual implementation, perform safe existing/synthetic tests where practical, report meaningful findings, and STOP.
+
+## 1. Confirmed product architecture
+
+The following decisions are FINAL for this audit:
+
+1. Fee Structure definitions are **SCHOOL-GLOBAL**.
+2. Fee Structures are shared across Academic Sessions within the same school.
+3. Generated student fee invoices are **ACADEMIC-SESSION-SPECIFIC**.
+4. Invoice operations must be scoped to the authenticated school and appropriate Academic Session.
+5. Archived-session invoices must retain their historical financial values.
+6. Fee Structure changes must not silently rewrite paid invoices or archived financial history.
+7. Application-facing dates and times use **Asia/Kolkata (IST)**.
+8. Mobile application and Mobile APIs are completely OUT OF SCOPE.
+
+Do not propose converting Fee Structures into session-specific definitions unless a concrete, serious architectural conflict is discovered. Even then, report it only; do not implement it.
+
+## 2. Strict safety restrictions
+
+DO NOT:
+
+- Modify application source code.
+- Modify permanent test files.
+- Modify Fee Structures.
+- Create, update or delete invoices.
+- Modify payment or refund records.
+- Modify financial formulas.
+- Modify Academic Sessions.
+- Modify Student Registry or enrollments.
+- Modify database schema.
+- Run migrations.
+- Run startup backfills.
+- Access or modify real financial database records.
+- Generate actual invoices.
+- Trigger late-fee recalculation or synchronization.
+- Trigger payment, refund or reminder actions.
+- Modify other Fees & Payments tabs.
+- Modify Mobile APIs or Mobile source.
+- Deploy or restart workflows.
+- Install new database infrastructure.
+
+Source inspection, existing safe tests and temporary non-persistent synthetic tests are permitted.
+
+If a test would perform a database write or trigger a financial side effect, DO NOT run it.
+
+## 3. Discover the complete Fee Structures functionality
+
+Inspect only the Web Principal Portal Fee Structures tab and its directly related backend paths.
+
+Identify existing capabilities such as:
+
+- Create Fee Structure.
+- Edit Fee Structure.
+- Delete Fee Structure.
+- Fee category/type.
+- Applicable classes.
+- Fee amount and breakdown.
+- Frequency.
+- Due day/date.
+- Late-fee configuration.
+- Active/inactive state, if implemented.
+- Invoice generation or synchronization, where directly triggered by Fee Structure operations.
+- Validation and permissions.
+
+Do not assume a feature exists merely because it is listed above.
+
+For each actual feature, document:
+
+- What the Principal sees.
+- Which API it calls.
+- What records it reads or changes.
+- Whether it is school-global or session-owned.
+- Any important restriction.
+
+Keep this section concise.
+
+## 4. Verify multi-tenant isolation
+
+This is a critical BENIUS requirement.
+
+Inspect all Fee Structure read and write routes.
+
+Verify:
+
+1. School ID comes from the authenticated session.
+2. School A cannot read School B's Fee Structures.
+3. School A cannot create, edit or delete School B's Fee Structures.
+4. A structure ID belonging to another school cannot bypass ownership checks.
+5. Related class/category references cannot cross school boundaries.
+6. Fee Structure synchronization cannot affect another school's invoices.
+7. Error responses do not expose another school's private data.
+
+Report any confirmed weakness with exact file and line references.
+
+Do not attempt unauthorized access against real schools.
+
+## 5. Verify Academic Session behavior
+
+Fee Structures are intentionally global.
+
+However, generated invoices are session-specific.
+
+Inspect how the application handles:
+
+- The selected Academic Session.
+- The school's active Academic Session.
+- Archived Academic Sessions.
+- Creating or editing global Fee Structures while an archived session is selected.
+- Generating invoices.
+- Synchronizing existing invoices.
+- Removing invoices after a structure's applicable classes change.
+- Late-fee configuration changes.
+
+Determine whether invoice-affecting operations are restricted to the authenticated school's ACTIVE session where intended.
+
+Confirm that a Principal viewing an archived session cannot accidentally modify archived invoice amounts through a global Fee Structure operation.
+
+Also verify that creating a new Academic Session does not automatically copy old session-owned invoices into the new session.
+
+Do not change existing behavior.
+
+## 6. Historical invoice protection — highest priority
+
+Inspect whether changing a Fee Structure can affect:
+
+- Paid invoices.
+- Partially paid invoices.
+- Unpaid active-session invoices.
+- Unpaid archived-session invoices.
+- Refunded invoices.
+- Cancelled or otherwise finalized invoices, if supported.
+
+Use the following matrix:
+
+| Invoice state | Expected policy to evaluate |
+|---|---|
+| Active session, unpaid | Existing authorized synchronization may apply |
+| Active session, partially paid | Must not silently rewrite financial history |
+| Active session, paid | Must not silently rewrite financial history |
+| Archived session, unpaid | Historical invoice values preserved |
+| Archived session, paid | Historical invoice values preserved |
+| Archived session, refunded | Historical invoice values preserved |
+
+For each state, distinguish what the current code actually does from the expected policy.
+
+Check whether deletion, class narrowing, fee amount edits, due-date changes and late-fee edits can bypass historical protections.
+
+Pay special attention to any update/delete SQL predicates.
+
+Do not execute these operations.
+
+## 7. Verify Fee Structure calculations and validation
+
+Inspect existing validation for:
+
+- Negative amounts.
+- Zero amounts, where applicable.
+- Decimal precision.
+- Invalid fee breakdowns.
+- Duplicate or overlapping structures.
+- Invalid frequency values.
+- Invalid due days.
+- Invalid late-fee values.
+- Invalid class assignments.
+- Missing required fields.
+- Malformed requests.
+- Authorization failures.
+
+Determine whether invalid input can cause incorrect invoice amounts or unexpected invoice synchronization.
+
+**Do not change financial formulas or recommend a different accounting policy without identifying a confirmed defect.**
+
+## 8. Historical presentation and snapshot behavior
+
+Earlier source audits identified two possible historical presentation issues:
+
+1. Some Ledger/export paths may fall back to the current global Fee Structure name when an older invoice lacks its own saved fee name.
+2. Some late-fee display paths may fall back to the current global Fee Structure configuration when an invoice lacks a historical snapshot.
+
+Verify only the Fee Structure-side cause and relevant direct dependency.
+
+Determine:
+
+- Which invoice fields are snapshotted at generation.
+- Whether structure edits can change the displayed name of older invoices.
+- Whether historical late-fee values can be reinterpreted using current settings.
+- Whether these are display-only effects or can persist financial changes.
+
+Do not expand into a new Ledger or Financial Analytics audit.
+
+## 9. Review UI and backend consistency
+
+Check whether the Fee Structures UI accurately reflects backend rules.
+
+Examples:
+
+- Does the UI distinguish global Fee Structures from session-owned invoices?
+- Are invoice-affecting actions explained clearly?
+- Are delete/edit confirmations appropriate?
+- Can the UI suggest that an archived session's invoices will be changed when they will not?
+- Are errors displayed meaningfully?
+- Does the UI prevent accidental duplicate submissions?
+- Are amounts and labels displayed correctly?
+
+Only report issues that materially affect correctness, security, historical integrity or Principal understanding.
+
+Do not propose cosmetic redesigns.
+
+## 10. Focused testing
+
+Run existing relevant tests only when they are safe.
+
+Where feasible, use mocked or synthetic data to verify:
+
+- School A versus School B isolation.
+- Valid Fee Structure creation/update validation.
+- Active-session unpaid invoice eligibility.
+- Archived invoice exclusion from synchronization.
+- Paid/partially paid invoice protection.
+- Class narrowing and deletion behavior.
+- Historical snapshot fallback behavior.
+
+No real database access or write operations.
+
+Do not create a new test framework or install SQL infrastructure.
+
+Clearly distinguish:
+
+- Executed synthetic test.
+- Query construction verified.
+- Source inspection only.
+- Not verified.
+
+Do not claim runtime correctness without runtime evidence.
+
+## 11. Severity and scope discipline
+
+Classify findings as:
+
+- **CRITICAL:** Cross-school financial access or modification, or serious financial data integrity risk.
+- **HIGH:** Archived/paid invoice financial mutation risk or serious authorization bypass.
+- **MEDIUM:** Confirmed incorrect validation, synchronization or historical presentation.
+- **LOW:** Minor functional or usability inconsistency.
+
+Do not classify hypothetical problems as confirmed defects.
+
+For each finding provide:
+
+- Exact source file and line.
+- Reproduction preconditions.
+- Current behavior.
+- Expected behavior.
+- Potential impact.
+- Evidence level.
+- Minimal proposed correction.
+
+Do not implement corrections.
+
+## 12. Required final report — concise
+
+Provide the following sections:
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Feature inventory
+
+A short table of implemented Fee Structures features and their APIs.
+
+### C. School-global architecture
+
+Confirm that structures are school-global and invoices are session-specific.
+
+### D. Tenant isolation
+
+PASS / ISSUE FOUND / NOT VERIFIED, with evidence.
+
+### E. Historical invoice protection
+
+Show the invoice-state matrix and identify any actual risks.
+
+### F. Validation and calculation findings
+
+List only material issues.
+
+### G. Historical snapshot findings
+
+Explain whether older invoice labels or late-fee displays can change due to current global configuration.
+
+### H. Tests performed
+
+Show executed tests, results and limitations.
+
+### I. Confirmed issues requiring owner approval
+
+Maximum five prioritized findings.
+
+If no material issue is confirmed, explicitly say so.
+
+### J. Closure recommendation
+
+Choose one:
+
+1. CLOSE — No material source-level defects found.
+2. CLOSE WITH DOCUMENTED LIMITATIONS — No correction currently justified.
+3. ONE TARGETED FIX REQUIRED — Specify exact issue and affected paths.
+
+Do not automatically propose FS-R2, FS-R3 or further audits.
+
+### K. Safety confirmation
+
+Confirm:
+
+- Application source modified: NO.
+- Database accessed: NO.
+- Database modified: NO.
+- Fee Structures modified: NO.
+- Invoice records modified: NO.
+- Financial formulas modified: NO.
+- Payment/refund processing modified: NO.
+- Academic Sessions modified: NO.
+- Migrations executed: NO.
+- Deployment/restart: NO.
+- Mobile code accessed or modified: NO.
+
+## 13. Mandatory stop
+
+After delivering the report, STOP.
+
+Do not implement fixes.
+
+Do not create task cards.
+
+Do not expand into other modules.
+
+Wait for explicit owner approval.
