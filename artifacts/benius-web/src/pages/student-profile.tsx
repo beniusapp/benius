@@ -552,7 +552,6 @@ export default function StudentProfile() {
     touchAction: 'manipulation',
     WebkitUserSelect: 'text',
     position: 'relative',
-    zIndex: 10000,
     caretColor: '#10b981',
   };
 
@@ -1175,7 +1174,6 @@ export default function StudentProfile() {
                       type="button"
                       onClick={() => setShowCurrentPw((v) => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                      style={{ zIndex: 10001 }}
                     >
                       {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -1204,7 +1202,6 @@ export default function StudentProfile() {
                       type="button"
                       onClick={() => setShowNewPw((v) => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                      style={{ zIndex: 10001 }}
                     >
                       {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -1238,7 +1235,6 @@ export default function StudentProfile() {
                       type="button"
                       onClick={() => setShowConfirmPw((v) => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                      style={{ zIndex: 10001 }}
                     >
                       {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
