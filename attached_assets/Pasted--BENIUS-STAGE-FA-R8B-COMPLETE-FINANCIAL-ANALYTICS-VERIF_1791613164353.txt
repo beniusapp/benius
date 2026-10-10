@@ -1,0 +1,514 @@
+# BENIUS — STAGE FA-R8B
+## COMPLETE FINANCIAL ANALYTICS VERIFICATION
+### ALL DISCOVERED FEATURES — STRICT NON-DESTRUCTIVE TESTING
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+FA-R8A completed the Financial Analytics feature inventory.
+
+The owner now requests comprehensive verification of EVERY feature discovered in R8A.
+
+**PRIMARY OBJECTIVE: Establish whether Financial Analytics is mathematically accurate, correctly scoped to the selected Academic Session, historically accurate, and consistent across UI, API, and PDF.**
+
+This is a VERIFICATION stage, not an implementation stage.
+
+## 1. Mandatory restrictions
+
+DO NOT:
+
+- Modify production application logic.
+- Modify financial formulas.
+- Modify database records.
+- Modify Academic Session records.
+- Modify historical enrollments.
+- Modify payment/refund logic.
+- Initiate payments or refunds.
+- Trigger reminders or dunning.
+- Send notifications.
+- Run migrations.
+- Create PostgreSQL clusters.
+- Deploy.
+- Restart workflows.
+- Change user permissions.
+
+You may execute existing safe tests and temporary in-memory verification scripts.
+
+Do not modify existing test expectations to force passing results.
+
+Do not add permanent application code or test files without separate owner approval.
+
+No direct Development or Production financial database access is authorized.
+
+## 2. Verification approach
+
+Use the actual FA-R8A feature inventory as the authoritative checklist.
+
+For each feature, verify four separate dimensions:
+
+A. Mathematical correctness.
+
+B. Existing BENIUS business-rule consistency.
+
+C. Authenticated-school and selected-Academic-Session isolation.
+
+D. UI/API/PDF consistency.
+
+Do not classify a feature as fully verified when only its source code was inspected.
+
+Use safe synthetic datasets with independently calculated expected results.
+
+Avoid circular tests that calculate expected results using the same production helper being tested.
+
+Where direct route tests require a database, use existing safe mocked infrastructure or mark the route NOT VERIFIED.
+
+Do not create replacement databases.
+
+## 3. Academic Session isolation — mandatory
+
+Test the complete data flow:
+
+Selected session → frontend query → API request → session validation → database query construction → calculation → response → UI/PDF.
+
+Verify:
+
+- Active session.
+- Archived session.
+- Multiple archived sessions.
+- School A versus School B.
+- Valid and invalid session IDs.
+- Deleted or unavailable sessions.
+- Session switching.
+- Browser refresh.
+- Navigation away and return.
+- Concurrent requests.
+- Aging drawer switching.
+- PDF generation during switching.
+
+Every financial record must be associated with the authenticated school and selected invoice Academic Session.
+
+Payments and refunds must follow their invoice's Academic Session, even if recorded later, according to the existing contract.
+
+For class-based reports, historical placement must use school ID, student ID, and invoice session ID.
+
+No current-class fallback.
+
+## 4. Verify all eight Executive Summary metrics
+
+Test:
+
+1. Due This Period.
+2. Gross Collected.
+3. Net Collected.
+4. Outstanding.
+5. Collection Efficiency.
+6. Online Collection.
+7. Offline Collection.
+8. Overdue Amount.
+
+Include:
+
+- Zero invoices.
+- Unpaid invoices.
+- Fully paid invoices.
+- Partial payments.
+- Multiple payments.
+- Processed partial/full refunds.
+- Pending/failed refunds.
+- Multiple refunds.
+- Late fees.
+- Payments after session end.
+- Refunds after session end.
+- Fractional rupees.
+- Duplicate or invalid source relationships.
+- Empty reporting periods.
+
+Verify date bases separately.
+
+Check whether Online + Offline equals Gross for equivalent populations.
+
+Check whether Overdue agrees with applicable aging balances.
+
+Do not change Net Collected or Collection Efficiency.
+
+If their current definitions are misleading, report an owner decision requirement.
+
+## 5. Verify all date filters
+
+Test:
+
+- Today.
+- This Week.
+- This Month.
+- Academic Year.
+- Custom dates.
+- Invalid dates.
+- Reversed dates.
+- Five-year limit.
+- Session start/end boundaries.
+- Ranges outside session boundaries.
+- IST midnight.
+- Monday/Sunday week boundaries.
+- Month-end/year-end boundaries.
+- Leap-year dates.
+
+For every filter confirm:
+
+- Exact start and end dates.
+- Invoice due-date filtering.
+- Payment received-date filtering.
+- Academic Session isolation.
+- Comparison-period behavior.
+- Correct PDF reporting period.
+
+Investigate whether the owner's archived-session screenshot figures are explainable by the existing date semantics:
+
+Academic Year:
+- Due ₹44,100.
+- Gross ₹44,250.
+- Efficiency 100.3%.
+
+This Month:
+- Due ₹9,000.
+- Gross ₹44,250.
+- Efficiency 491.7%.
+
+Do not invent underlying transaction records.
+
+If the figures cannot be independently reconciled without authorized financial data, say so.
+
+## 6. Verify Collection Trend
+
+Test:
+
+- Hourly grouping for Today.
+- Daily grouping.
+- Monthly grouping.
+- Due-date demand.
+- Received-date collections.
+- IST boundaries.
+- Payments created and received on different dates.
+- Backdated payments.
+- Delayed payment recording.
+- Zero-value buckets.
+- Comparison totals.
+
+Specifically investigate the use of `created_at` for hourly buckets versus `received_date` for payment inclusion.
+
+Determine whether this creates a confirmed inconsistency.
+
+Do not modify grouping logic.
+
+## 7. Verify Payment Channels and Payment Method Split
+
+Test:
+
+- Online Razorpay payments.
+- Portal Payment classification.
+- Cash.
+- Offline/manual payments.
+- Unknown methods.
+- Payment counts.
+- Average transaction values.
+- Channel percentages.
+- Payment attempts and lifecycle statuses.
+- Duplicate attempt references.
+- Gross collection reconciliation.
+- Fractional currency amounts.
+
+Payment attempts must not be counted as successful revenue.
+
+## 8. Verify Class Performance
+
+Test:
+
+- Current session.
+- Archived session.
+- Promoted students.
+- Section changes.
+- Missing enrollment.
+- Duplicate enrollment.
+- Ambiguous placement.
+- Students who have left school.
+- Correct billed amounts.
+- Correct collected amounts.
+- Correct outstanding amounts.
+- School-wide total preservation.
+
+Verify no current-class fallback.
+
+## 9. Verify Fee Categories
+
+Test:
+
+- Invoice fee type.
+- Multiple categories.
+- Missing/unknown categories.
+- Billed amount.
+- Collected amount.
+- Outstanding.
+- Late fees.
+- Refunds.
+- Academic Session attribution.
+- Date filters.
+
+Check category totals against relevant Executive Summary metrics when their populations match.
+
+## 10. Verify Receivables Aging
+
+Test all buckets:
+
+- 1–30 days.
+- 31–60 days.
+- 61–90 days.
+- 90+ days.
+
+Verify exact bucket boundaries using IST dates.
+
+Test:
+
+- Unpaid invoices.
+- Partially paid invoices.
+- Processed refunds.
+- Pending refunds.
+- Fractional amounts.
+- Historical Class and Section.
+- Class filter.
+- Fee-type filter.
+- Empty buckets.
+- Multiple Academic Sessions.
+- Cross-school isolation.
+- Sorting.
+- 200-row limit.
+
+Verify whether the 200-row cap causes incomplete drill-down results or misleading filters.
+
+Do not implement pagination.
+
+## 11. Verify Cash Denomination Coverage
+
+Test:
+
+- Valid denominations.
+- Correct quantities.
+- Missing breakdown.
+- Invalid denomination key.
+- Leading-zero keys.
+- Fractional quantity.
+- Negative quantity.
+- Zero quantity.
+- Unknown denomination.
+- Duplicate denomination representations.
+- Cash payment with mismatched denomination sum.
+- Multiple cash payments.
+- School/session/date isolation.
+
+Determine whether malformed data is rejected, ignored, truncated, or incorrectly included.
+
+Compare denomination coverage against recorded cash receipts.
+
+Do not change cash validation rules.
+
+## 12. Verify all eight PDF exports
+
+Audit:
+
+1. Complete Financial Analytics report.
+2. Executive Summary PDF.
+3. Collection Trend PDF.
+4. Payment Channels PDF.
+5. Class Performance PDF.
+6. Fee Categories PDF.
+7. Receivables Aging PDF.
+8. Cash Denomination Coverage PDF.
+
+For each:
+
+- Correct school.
+- Correct selected Academic Session.
+- Correct reporting dates.
+- Correct IST timestamp.
+- Correct figures.
+- Correct historical placement.
+- Correct paise formatting.
+- Correct empty-state rendering.
+- Correct long-content handling.
+- Correct pagination.
+- Correct section selection.
+- Correct PDF download behavior.
+
+Verify stale-session protection.
+
+Use synthetic rendering where safe.
+
+Clearly distinguish synthetic PDF verification from real signed-in export verification.
+
+## 13. Verify permissions and reminder boundary
+
+Verify that:
+
+- Admin access is authorized.
+- Support Staff access follows Financial Analytics grants.
+- School isolation is enforced.
+- Academic Session isolation is enforced.
+- Archived analytics reads are permitted.
+- Unauthorized writes remain blocked.
+- The Remind action is a separate POST with appropriate authorization.
+
+Determine whether the Remind button is incorrectly visible to Support Staff who lack permission to execute it.
+
+Do not click the button.
+
+Do not send reminders.
+
+Do not call the dunning endpoint.
+
+## 14. Verify UI states and controls
+
+Inspect:
+
+- Loading.
+- Error.
+- Retry.
+- Empty states.
+- Refresh.
+- Filter changes.
+- Custom date input.
+- Session changes.
+- Aging drawer opening/closing.
+- Drawer filters.
+- PDF loading state.
+- Failed PDF requests.
+- Stale response handling.
+- Accessibility of controls where practical.
+
+Do not modify UI code.
+
+## 15. Cross-module consistency
+
+Compare existing read-only calculations with:
+
+- Ledger & Transactions.
+- Student Fees.
+- Invoice details.
+- Payment history.
+- Refund service.
+
+Only compare equivalent populations and date bases.
+
+Distinguish actual defects from intentionally different reporting definitions.
+
+Do not modify other modules.
+
+## 16. Test coverage and evidence
+
+Run relevant existing tests and safe synthetic checks.
+
+Report separately:
+
+- SOURCE VERIFIED.
+- UNIT TEST PASSED.
+- MOCKED ROUTE TEST PASSED.
+- SYNTHETIC PDF VERIFIED.
+- SIGNED-IN UI VERIFIED.
+- DATABASE RECONCILED.
+- NOT VERIFIED.
+
+Do not claim 100% financial accuracy based solely on unit tests.
+
+Record whether each discovered feature has an independently computed expected result.
+
+## 17. Required final report
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Complete feature verification matrix
+
+One row for EVERY discovered feature and subfeature.
+
+| Feature | Math | School scope | Session scope | Historical placement | UI | PDF | Evidence | Verdict |
+
+### C. Executive Summary verification
+
+All eight metrics with exact formulas and test results.
+
+### D. Academic Session verification
+
+Active, Archived, refresh, switching, and cross-school scenarios.
+
+### E. Filter verification
+
+Every preset and custom range.
+
+### F. Chart verification
+
+Every chart and breakdown.
+
+### G. Aging verification
+
+Buckets, details, historical placement, filters, precision, and completeness.
+
+### H. Cash-denomination verification
+
+Include malformed data handling.
+
+### I. PDF verification
+
+All eight exports independently.
+
+### J. Permission and reminder verification
+
+Separate read-only analytics permissions from the side-effecting reminder action.
+
+### K. Owner screenshot reconciliation
+
+Explain the observed values only to the extent supported by evidence.
+
+### L. Confirmed defects
+
+For each confirmed defect provide:
+
+- Severity.
+- Exact file and line numbers.
+- Reproduction conditions.
+- Expected versus actual result.
+- Financial or Academic Session impact.
+- Smallest proposed correction.
+
+### M. Business-definition decisions
+
+List unresolved definitions separately from implementation defects.
+
+### N. Coverage limitations
+
+Clearly identify untested signed-in UI, real database reconciliation, or other limitations.
+
+### O. Final safety confirmation
+
+Confirm:
+
+- Application logic changed: NO.
+- Database accessed or modified: NO.
+- Financial formulas changed: NO.
+- Payment/refund operations: NO.
+- Reminders sent: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restarts: NO.
+
+## 18. Mandatory stop
+
+After the complete verification report, STOP.
+
+Do not implement fixes.
+
+Do not modify formulas.
+
+Do not change Academic Session behavior.
+
+Do not change payment/refund processing.
+
+Do not modify unrelated modules.
+
+Wait for owner approval.
