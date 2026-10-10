@@ -1,0 +1,93 @@
+BENIUS — TEACHER PORTAL UPLOAD AND WORD LIMIT UPDATES
+
+Implement the following four changes in the existing BENIUS Teacher Portal.
+
+SCOPE: Only the specified Teacher Portal fields and upload endpoints.
+
+1. TEACHER PROFILE — /teacher-dashboard/profile
+
+Change Photo Upload maximum to 5 MB.
+
+- Update the displayed label to "Max size: 5 MB".
+- Reject files larger than 5 MB.
+- Preserve existing image formats, profile photo and verification behavior.
+
+2. TEACHER GALLERY — /teacher-dashboard/gallery
+
+Under Upload Photos:
+
+- Maximum 10 images per submission.
+- Maximum file size: 10 MB PER IMAGE.
+- Update the upload UI to display "Up to 10 images • Max 10 MB each".
+- Reject any individual image larger than 10 MB.
+- Reject submissions containing more than 10 images.
+- Show clear validation errors.
+- Preserve the existing image formats, gallery approval workflow and metadata fields.
+- Ensure server request-body limits permit a valid batch of up to 10 images, subject to safe upload handling and existing infrastructure constraints. Do not increase unrelated global upload limits.
+
+3. TEACHER LIBRARY — /teacher-dashboard/library
+
+Under Upload E-Book:
+
+- Maximum file size: 10 MB.
+- Update the upload UI to display "Max 10 MB".
+- Reject files larger than 10 MB.
+- Preserve existing PDF/EPUB formats, class targeting, category and principal approval workflow.
+
+4. TEACHER LEAVE — /teacher-dashboard/leave
+
+Under Apply for Leave → Reason for Leave:
+
+- Maximum 500 WORDS.
+- Display a live word counter below the textarea.
+- Counter format: 0/500.
+- Count words using trimmed whitespace-separated text.
+- Empty text = 0 words.
+- Prevent submission if the reason exceeds 500 words.
+- Show a clear validation error.
+- Preserve existing leave types, dates, balances and approval workflow.
+
+5. FRONTEND AND BACKEND VALIDATION
+
+- Use 1 MB = 1,048,576 bytes.
+- 5 MB = 5,242,880 bytes.
+- 10 MB = 10,485,760 bytes.
+- Validate all limits in both the frontend and the corresponding backend API endpoints.
+- Reject oversized uploads and over-limit text submitted directly through APIs.
+- For Gallery, enforce both the per-image size and 10-image count on the backend.
+- Do not silently truncate text.
+- Do not change unrelated upload limits or text fields.
+
+6. SAFETY
+
+- Preserve authenticated school/tenant isolation.
+- Preserve Academic Session ID scoping where applicable.
+- Do not modify existing uploaded files, records or historical data.
+- No database schema changes or migrations.
+- No Production or Mobile changes.
+- No deployment or service restart without approval.
+- Do not change unrelated modules.
+
+7. TESTING
+
+Verify:
+- Exactly 5 MB profile photo accepted; one byte above rejected.
+- Exactly 10 MB Gallery image accepted; one byte above rejected.
+- Gallery accepts up to 10 valid images; rejects 11.
+- Exactly 10 MB E-Book accepted; one byte above rejected.
+- Exactly 500 words accepted; 501 rejected.
+- Word counter updates correctly while typing, deleting and pasting.
+- Existing upload and approval functionality remains intact.
+
+Run focused tests and API/Web builds.
+
+Implement directly without another broad audit.
+
+FINAL REPORT:
+1. Files changed.
+2. Tests passed/failed.
+3. Backend validation confirmed.
+4. Any infrastructure limitation affecting a valid 10-image Gallery upload.
+5. Whether a Development API restart is required.
+
+STOP after implementation and testing. Wait for my approval before restarting or deploying.

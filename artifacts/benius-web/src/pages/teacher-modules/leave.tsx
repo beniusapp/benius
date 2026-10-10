@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
+import { countTeacherWords, exceedsTeacherWordLimit, TEACHER_LEAVE_REASON_MAX_WORDS } from "@/lib/teacher-field-limits";
 
 interface LeaveEntry {
   id: number;
@@ -421,11 +422,19 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                 className="text-gray-900"
                 data-testid="input-leave-reason"
               />
+              <div className={`text-xs text-right ${exceedsTeacherWordLimit(reason) ? "text-red-600" : "text-gray-500"}`} aria-live="polite" data-testid="text-leave-reason-word-count">
+                {countTeacherWords(reason)}/{TEACHER_LEAVE_REASON_MAX_WORDS}
+              </div>
+              {exceedsTeacherWordLimit(reason) && <p className="text-xs text-red-600" role="alert">Leave reason cannot exceed 500 words.</p>}
               <Button
                 onClick={() => {
+                  if (exceedsTeacherWordLimit(reason)) {
+                    toast({ title: "Reason too long", description: "Leave reason cannot exceed 500 words.", variant: "destructive" });
+                    return;
+                  }
                   if (selectedSessionId !== null) submitMutation.mutate(selectedSessionId);
                 }}
-                disabled={isArchiveMode || selectedSessionId === null || !leaveType || !startDate || !endDate || !reason.trim() || submitMutation.isPending || isBalanceZero}
+                disabled={isArchiveMode || selectedSessionId === null || !leaveType || !startDate || !endDate || !reason.trim() || exceedsTeacherWordLimit(reason) || submitMutation.isPending || isBalanceZero}
                 data-testid="button-submit-leave"
               >
                 {submitMutation.isPending ? (

@@ -8,6 +8,15 @@ import {
 import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
 import multer from "multer";
+import {
+  exceedsTeacherWordLimit,
+  isTeacherGalleryBatchValid,
+  TEACHER_EBOOK_MAX_BYTES,
+  TEACHER_GALLERY_IMAGE_MAX_BYTES,
+  TEACHER_GALLERY_MAX_IMAGES,
+  TEACHER_LEAVE_REASON_MAX_WORDS,
+  TEACHER_PROFILE_PHOTO_MAX_BYTES,
+} from "./teacher-field-limits";
 import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
@@ -535,10 +544,10 @@ const diskUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: TEACHER_EBOOK_MAX_BYTES },
 });
 
-// Dedicated uploader for teacher profile pictures — hard 1 MB cap
+// Dedicated uploader for teacher profile pictures.
 const teacherProfilePhotoUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -551,13 +560,48 @@ const teacherProfilePhotoUpload = multer({
       cb(null, unique + path.extname(file.originalname));
     },
   }),
-  limits: { fileSize: 1 * 1024 * 1024 },
+  limits: { fileSize: TEACHER_PROFILE_PHOTO_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowed.includes(file.mimetype)) cb(null, true);
     else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
   },
 });
+
+const teacherGalleryUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: TEACHER_GALLERY_IMAGE_MAX_BYTES, files: TEACHER_GALLERY_MAX_IMAGES },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
+const galleryUploadMiddleware = (middleware: RequestHandler): RequestHandler => (req, res, next) => {
+  middleware(req, res, (error?: any) => {
+    if (error) {
+      const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
+      const tooMany = error instanceof multer.MulterError && error.code === "LIMIT_UNEXPECTED_FILE";
+      res.status(tooLarge ? 413 : 400).json({
+        message: tooLarge
+          ? "Each gallery image must be 10 MB or smaller."
+          : tooMany ? "A maximum of 10 images can be uploaded at once." : error.message || "Gallery upload failed",
+      });
+      return;
+    }
+    next();
+  });
+};
 
 const studentPhotoUpload = multer({
   storage: multer.diskStorage({
@@ -1010,7 +1054,7 @@ export function registerTeacherRoutes(app: Express) {
     (req: any, res: any, next: any) => {
       teacherProfilePhotoUpload.single("file")(req, res, (err: any) => {
         if (err && err.code === "LIMIT_FILE_SIZE") {
-          return res.status(400).json({ message: "File too large. Maximum size is 1 MB." });
+          return res.status(413).json({ message: "Teacher profile photo must be 5 MB or smaller." });
         }
         if (err) return res.status(400).json({ message: err.message || "Upload error" });
         next();
@@ -2905,7 +2949,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && req.session.userRole === "support_staff"
       && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     next();
-  }, diskUpload.single("image"), async (req, res) => {
+  }, galleryUploadMiddleware(teacherGalleryUpload.single("image")), async (req, res) => {
     const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     if (!req.file) return res.status(400).json({ message: "Image file required" });
 
@@ -2951,10 +2995,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && req.session.userRole === "support_staff"
       && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     next();
-  }, diskUpload.array("images", 10), async (req, res) => {
+  }, galleryUploadMiddleware(teacherGalleryUpload.array("images", TEACHER_GALLERY_MAX_IMAGES)), async (req, res) => {
     const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
+    if (!isTeacherGalleryBatchValid(files.map(file => file.size))) {
+      return res.status(400).json({ message: "Upload up to 10 images, each 10 MB or smaller." });
+    }
 
     const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
@@ -3142,7 +3189,18 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
-  app.post("/api/library/ebooks", diskUpload.single("file"), async (req, res) => {
+  app.post("/api/library/ebooks", (req, res, next) => {
+    diskUpload.single("file")(req, res, (error) => {
+      if (error) {
+        const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
+        res.status(tooLarge ? 413 : 400).json({
+          message: tooLarge ? "E-Book file must be 10 MB or smaller." : error.message || "Upload failed",
+        });
+        return;
+      }
+      next();
+    });
+  }, async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "File required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -3283,6 +3341,9 @@ export function registerTeacherRoutes(app: Express) {
       || typeof reason !== "string" || !reason.trim()
       || typeof startDate !== "string" || typeof endDate !== "string") {
       return res.status(400).json({ message: "All fields required" });
+    }
+    if (exceedsTeacherWordLimit(reason)) {
+      return res.status(400).json({ message: `Leave reason cannot exceed ${TEACHER_LEAVE_REASON_MAX_WORDS} words.` });
     }
 
     if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
+import { exceedsTeacherUploadLimit, TEACHER_PROFILE_PHOTO_MAX_BYTES } from "@/lib/teacher-field-limits";
 import { queryClient } from "@/lib/queryClient";
 import { motion, AnimatePresence } from "framer-motion";
 import Cropper from "react-easy-crop";
@@ -216,8 +217,8 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum 1 MB allowed. Please choose a smaller image.", variant: "destructive" });
+    if (exceedsTeacherUploadLimit(file, TEACHER_PROFILE_PHOTO_MAX_BYTES)) {
+      toast({ title: "File too large", description: "Maximum 5 MB allowed. Please choose a smaller image.", variant: "destructive" });
       e.target.value = "";
       return;
     }
@@ -275,7 +276,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
             <DialogTitle className="text-white text-base font-semibold flex items-center gap-2">
               <Camera className="w-4 h-4 text-[#10b981]" /> Crop Profile Photo
             </DialogTitle>
-            <p className="text-xs text-white/40 mt-0.5">Maximum file size: <span className="text-amber-400 font-semibold">1 MB</span></p>
+            <p className="text-xs text-white/40 mt-0.5">Max size: <span className="text-amber-400 font-semibold">5 MB</span></p>
           </DialogHeader>
 
           <div className="relative w-full h-72 bg-black">
@@ -477,6 +478,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
         accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={handleFileSelect}
+        data-max-bytes={TEACHER_PROFILE_PHOTO_MAX_BYTES}
         data-testid="input-photo-file"
       />
 
@@ -575,7 +577,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
                 >
                   <Camera className="w-3 h-3" /> Change Photo
                 </button>
-                <p className="text-[10px] text-white/30">Max size: <span className="text-amber-400/80 font-medium">1 MB</span></p>
+                <p className="text-[10px] text-white/30">Max size: <span className="text-amber-400/80 font-medium">5 MB</span></p>
               </div>
             )}
 

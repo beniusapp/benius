@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { exceedsTeacherUploadLimit, TEACHER_EBOOK_MAX_BYTES } from "@/lib/teacher-field-limits";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfig } from "@/hooks/use-school-config";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
@@ -154,6 +155,10 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
     }
     if (!ebookFile) {
       toast({ title: "Validation Error", description: "Please select a PDF or EPUB file.", variant: "destructive" }); return;
+    }
+    if (exceedsTeacherUploadLimit(ebookFile, TEACHER_EBOOK_MAX_BYTES)) {
+      toast({ title: "File too large", description: "E-Book files must be 10 MB or smaller.", variant: "destructive" });
+      return;
     }
     const formData = new FormData();
     formData.append("title", ebookTitle.trim());
@@ -530,11 +535,22 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     type="file"
                     accept=".pdf,.epub"
                     className="hidden"
-                    onChange={e => setEbookFile(e.target.files?.[0] || null)}
+                    onChange={e => {
+                      const file = e.target.files?.[0] || null;
+                      if (file && exceedsTeacherUploadLimit(file, TEACHER_EBOOK_MAX_BYTES)) {
+                        toast({ title: "File too large", description: "E-Book files must be 10 MB or smaller.", variant: "destructive" });
+                        e.currentTarget.value = "";
+                        setEbookFile(null);
+                        return;
+                      }
+                      setEbookFile(file);
+                    }}
                     disabled={isArchiveMode}
+                    data-max-bytes={TEACHER_EBOOK_MAX_BYTES}
                     data-testid="input-ebook-file"
                   />
                 </label>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Max 10 MB</p>
               </div>
 
               <div className="px-3 py-2.5 rounded-xl text-xs" style={{ background: "rgba(20,184,166,0.06)", border: "1px solid rgba(20,184,166,0.14)", color: "rgba(255,255,255,0.45)" }}>
