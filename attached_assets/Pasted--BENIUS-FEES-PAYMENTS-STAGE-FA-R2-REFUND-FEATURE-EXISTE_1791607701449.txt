@@ -1,0 +1,260 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE FA-R2 — REFUND FEATURE EXISTENCE, DEPENDENCY AND SAFE DISABLING AUDIT
+### OWNER APPROVED — STRICTLY READ-ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+## OWNER'S DECISION
+
+The owner does not want to offer Refund functionality in BENIUS at this stage.
+
+The owner wants to understand whether Refund functionality currently exists, where it is accessible, and how it could be safely disabled without affecting existing Fees & Payments business logic.
+
+**THIS IS AN AUDIT ONLY. DO NOT IMPLEMENT ANY CHANGE.**
+
+## 1. Identify every Refund feature
+
+Thoroughly inspect the application for:
+
+- Refund buttons.
+- Refund menu items.
+- Refund dialogs and forms.
+- Refund initiation actions.
+- Refund APIs.
+- Refund permissions.
+- Refund database tables.
+- Refund service functions.
+- Razorpay refund integrations.
+- Refund webhooks.
+- Refund reconciliation jobs.
+- Refund statuses and events.
+- Refund-related calculations.
+- Refund displays in financial reports.
+
+Check the following areas:
+
+1. Principal Portal → Fees & Payments.
+2. Principal Portal → Ledger & Transactions.
+3. Principal Portal → Financial Analytics.
+4. Student Portal → Fees.
+5. Support Staff financial permissions.
+6. Backend payment/refund services.
+7. Mobile application, only for refund-related functionality.
+
+Identify exact file paths, line numbers, routes, and callers.
+
+## 2. Confirm whether users can currently initiate refunds
+
+Answer clearly:
+
+- Is there a visible Refund button in the Principal Portal?
+- Is there a Refund option in Ledger & Transactions?
+- Can Support Staff initiate refunds?
+- Can Students initiate refunds?
+- Is Refund functionality exposed through any mobile screen?
+- Can an authenticated user initiate a refund directly through an API even if no button exists?
+- Which roles and permissions allow refund initiation?
+- Are there any public or insufficiently protected refund endpoints?
+
+Distinguish:
+
+- Visible UI functionality.
+- Backend functionality.
+- Permission-controlled functionality.
+- Provider callback functionality.
+
+Do not assume that a missing button means the backend is disabled.
+
+## 3. Trace the refund dependency chain
+
+Trace the existing flow:
+
+Payment → Refund Request → Razorpay → Refund Status → Refund Records → Invoice Projection → Ledger → Financial Analytics → Student Fees.
+
+Determine exactly which components depend on refund records or refund statuses.
+
+Identify whether disabling refund initiation would affect:
+
+- Successful payment recording.
+- Payment verification.
+- Online payment reconciliation.
+- Offline payment recording.
+- Invoice generation.
+- Receipt generation.
+- Outstanding calculations.
+- Payment status.
+- Late fees.
+- Ledger exports.
+- Financial Analytics.
+- Archived Academic Sessions.
+- Student Fees.
+- Existing payment gateway webhooks.
+
+## 4. Investigate the safest disabling approach
+
+Compare these options without implementing them:
+
+### Option A — Hide Refund UI only
+
+Determine whether backend refund initiation would remain accessible.
+
+### Option B — Disable new refund initiation at the backend and hide Refund UI
+
+Determine whether normal payment processing would continue safely.
+
+Check whether provider-confirmed callbacks for already-existing refunds would still need to be handled.
+
+### Option C — Remove refund functionality entirely
+
+Identify the risks of deleting refund services, records, webhooks, or financial calculations.
+
+Determine whether this could break existing payments, financial reporting, or historical records.
+
+Recommend the smallest safe approach that meets the owner's intention.
+
+Do not implement any option.
+
+## 5. Existing refund records
+
+Determine from source and schema:
+
+- Whether refunds are stored permanently.
+- Whether historical refunds may exist.
+- Whether payment records reference refunds.
+- Whether refund events are required for auditability.
+- Whether outstanding balances depend on processed refunds.
+- Whether existing refund callbacks can arrive after new refund initiation is disabled.
+
+Do not inspect actual Development or Production financial records.
+
+Do not delete, hide from accounting, reset, or modify any refund records.
+
+Clearly state that source inspection cannot prove whether actual refunds exist in the database.
+
+## 6. Financial Analytics impact
+
+The previous audit found:
+
+- Gross Collected uses payment records.
+- Net Collected currently equals Gross Collected.
+- Financial Analytics outstanding omits processed refunds.
+- Aging drill-down includes processed refunds.
+- Ledger transaction detail uses refund-aware outstanding.
+- Student Fees has inconsistent outstanding calculations after processed refunds.
+
+Investigate:
+
+1. If new refund initiation is disabled, do these inconsistencies remain relevant to existing historical refunds?
+2. Can all normal no-refund financial calculations remain unchanged?
+3. Which refund-related displays can safely be hidden?
+4. Which refund-related calculations must remain for historical financial correctness?
+5. Would removing refund-related code affect Razorpay payment verification?
+6. Would removing refund-related webhooks affect other payment event processing?
+7. Would disabling new refunds change existing invoice statuses or balances?
+
+**Do not change Net Collected, Outstanding, Collection Efficiency, or any other formula.**
+
+## 7. Academic Session safety
+
+Verify the proposed disabling approach would preserve:
+
+- Active-session payment functionality.
+- Archived-session read-only behavior.
+- Historical invoices and receipts.
+- Historical financial reports.
+- Session-specific payment records.
+- Multi-tenant isolation.
+- Refund history already associated with older sessions.
+
+Do not modify Academic Session state.
+
+## 8. Security and API protection
+
+Inspect whether refund initiation can be blocked independently from:
+
+- Payment creation.
+- Payment verification.
+- Payment webhooks.
+- Payment reconciliation.
+- Invoice generation.
+- Receipt generation.
+
+Identify the narrowest refund-specific server-side control.
+
+Do not recommend disabling a shared payment endpoint if it would interrupt normal payment processing.
+
+## 9. Required final report
+
+Provide:
+
+### A. Overall result
+
+PASS / NEEDS CHANGES / PARTIAL PASS / BLOCKED.
+
+### B. Refund feature inventory
+
+| Component | Exists? | Accessible by whom? | File/route | Purpose |
+
+### C. Current user-facing functionality
+
+Clearly answer whether a Refund button or option currently exists in each portal.
+
+### D. Backend functionality
+
+Identify every refund initiation route, service, permission, webhook, and related dependency.
+
+### E. Disabling options
+
+Compare UI-only hiding, backend disabling, and complete removal.
+
+Explain the risk of each.
+
+### F. Financial business-logic impact
+
+Identify what must remain untouched to preserve existing financial accuracy.
+
+### G. Existing historical refund handling
+
+Explain how already-recorded refunds and delayed provider callbacks should be preserved if new refunds are disabled.
+
+### H. Academic Session and tenant isolation
+
+Identify any risks to school/session boundaries.
+
+### I. Recommended minimal change plan
+
+Provide a staged, narrow proposal to stop NEW refund initiation while preserving payment functionality and historical financial data.
+
+Do not implement it.
+
+### J. Safety confirmation
+
+Confirm:
+
+- Application code modified: NO.
+- Financial formulas modified: NO.
+- Database records modified: NO.
+- Payment/refund operations executed: NO.
+- Development/Production financial records accessed: NO.
+- Deployment performed: NO.
+- Workflows restarted: NO.
+
+## 10. MANDATORY STOP
+
+After completing the audit, STOP.
+
+Do not hide any buttons yet.
+
+Do not disable any API yet.
+
+Do not remove refund code.
+
+Do not change payment processing.
+
+Do not change financial calculations.
+
+Do not delete refund tables or records.
+
+Do not modify Financial Analytics.
+
+Wait for explicit owner approval.
