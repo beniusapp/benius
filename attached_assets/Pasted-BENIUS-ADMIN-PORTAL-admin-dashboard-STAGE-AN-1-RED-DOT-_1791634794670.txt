@@ -1,0 +1,147 @@
+BENIUS — ADMIN PORTAL → /admin-dashboard
+
+STAGE AN-1: RED-DOT NOTIFICATIONS AND ACTION REQUIRED DISCOVERY
+
+MODE: STRICTLY READ-ONLY. DO NOT MODIFY CODE.
+
+OBJECTIVE:
+
+Understand the complete existing red-dot notification system in the Admin Portal, including parent modules, submodules, and the Action Required section.
+
+PART A — HOW RED-DOT NOTIFICATIONS WORK
+
+Investigate:
+
+1. What triggers a red-dot notification?
+2. Is the red dot based on:
+   - Pending approval?
+   - Unread records?
+   - New activity?
+   - Incomplete tasks?
+   - Errors or warnings?
+3. Does it use a count or a simple true/false indicator?
+4. Does opening a module clear the red dot?
+5. Does the red dot disappear only after the underlying action is completed?
+6. Does it update automatically, on refresh, or through polling?
+7. Does the red dot represent the authenticated Admin's school only?
+8. Is it scoped to the selected Academic Session where applicable?
+
+Identify the exact frontend components, hooks, APIs, and backend logic.
+
+PART B — COMPLETE MODULE AND SUBMODULE INVENTORY
+
+Inspect the actual Admin Dashboard navigation configuration.
+
+Prepare a complete inventory of:
+
+- Every parent module.
+- Every submodule.
+- Whether a red-dot notification currently exists.
+- What condition triggers it.
+- Which API or data source supplies it.
+- Whether the notification is working, partially implemented, or missing.
+
+Do not guess module names. Use the actual navigation structure.
+
+PART C — ACTION REQUIRED
+
+Investigate the existing "Action Required" section.
+
+Identify:
+
+1. Where Action Required appears in the Admin Portal.
+2. Every module/submodule currently linked to it.
+3. The exact event or condition that creates an Action Required item.
+4. Whether clicking an item navigates to the correct module.
+5. Whether completing an action removes the item.
+6. Whether Action Required shares data with red-dot notifications.
+7. Whether Action Required has its own API, query, or calculation logic.
+8. Whether its items are school-scoped and Academic Session-scoped where required.
+
+Provide a complete mapping:
+
+Action Required item → Trigger → Destination module/submodule → Data source.
+
+PART D — MISSING RED-DOT NOTIFICATIONS
+
+Compare the full Admin navigation inventory with existing notification coverage.
+
+Identify:
+
+1. Modules with actionable pending work but no red-dot indicator.
+2. Submodules with pending approvals, requests, or unresolved actions that are not represented.
+3. Parent modules that do not reflect actionable child-module notifications.
+4. Existing red dots that may be inaccurate, stale, or disconnected from actual pending work.
+5. Modules where a red dot would be inappropriate because they are informational or read-only.
+
+Classify each proposed addition as:
+
+- HIGH PRIORITY — Admin action genuinely required.
+- OPTIONAL — Informational notification.
+- NOT RECOMMENDED — No meaningful actionable trigger.
+
+PART E — CAN MISSING RED DOTS BE ADDED TO ACTION REQUIRED?
+
+For every identified missing notification, determine:
+
+- Can it be included in Action Required?
+- What exact pending-action condition should trigger it?
+- Which existing endpoint can supply the count?
+- Is a new backend endpoint necessary?
+- What should happen when the Admin clicks it?
+- What condition removes the notification?
+- Is it safe from duplicate counting?
+- Is it school- and session-isolated?
+
+IMPORTANT PRODUCT PRINCIPLE:
+
+A red dot and an Action Required item should represent genuine pending work, not merely the existence of records.
+
+Opening a module should not automatically clear an unresolved action unless the existing feature is explicitly designed as an unread notification.
+
+PART F — RECOMMENDED DESIGN
+
+Recommend the smallest safe approach to:
+
+1. Keep red dots and Action Required consistent.
+2. Aggregate child-module pending actions into parent-module indicators.
+3. Avoid duplicated or misleading counts.
+4. Preserve school/tenant isolation.
+5. Preserve selected Academic Session isolation for session-owned actions.
+6. Avoid unnecessary polling and expensive database queries.
+7. Reuse existing APIs wherever possible.
+
+PART G — REPORT
+
+Provide:
+
+A. Existing red-dot mechanism and refresh behavior.
+
+B. Complete Admin parent-module/submodule notification inventory in a table.
+
+C. Complete Action Required mapping in a table.
+
+D. Missing red-dot notifications, prioritized.
+
+E. Which missing notifications should also appear in Action Required.
+
+F. Confirmed issues and risks with file/line references.
+
+G. Smallest recommended implementation plan, separated into frontend and backend changes.
+
+STRICT RULES:
+
+- READ-ONLY SOURCE INSPECTION ONLY.
+- Do not modify files.
+- Do not change notification states or records.
+- Do not create or dismiss pending actions.
+- Do not modify approval workflows.
+- Do not execute database mutations.
+- Do not restart workflows.
+- Do not deploy or publish.
+- Do not work on Mobile.
+- Do not audit unrelated portals.
+
+Focus only on the Admin Dashboard and its existing notification dependencies.
+
+Stop after reporting and wait for approval.
