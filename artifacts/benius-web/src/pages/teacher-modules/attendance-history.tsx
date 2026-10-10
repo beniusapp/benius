@@ -10,6 +10,11 @@ import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useISTToday } from "@/hooks/use-ist-today";
 import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
 import {
+  teacherLeaveApplicationsForDate,
+  teacherLeaveStatusLabel,
+  type ScopedTeacherLeaveApplication,
+} from "./teacher-leave-attendance-status";
+import {
   addCalendarDays,
   calendarMonthEndDate,
   calendarWeekday,
@@ -59,6 +64,7 @@ interface DayEntry {
   isFuture: boolean;
   record: HistRecord | null;
   effectiveStatus: string;
+  leaveApplications: ScopedTeacherLeaveApplication[];
 }
 
 type TabView = "daily" | "weekly" | "monthly";
@@ -106,7 +112,14 @@ function statusCfg(s: string) {
 }
 
 /** Build report days within the selected Session, without persisting missing-day rows. */
-function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: string, rate: TeacherSelfRate): DayEntry[] {
+function buildDayList(
+  from: string,
+  to: string,
+  dbRecords: HistRecord[],
+  today: string,
+  rate: TeacherSelfRate,
+  leaveApplications: ScopedTeacherLeaveApplication[],
+): DayEntry[] {
   // Normalize attendanceDate — defensive slice(0,10) handles any ISO datetime leak
   const recMap = new Map(dbRecords.map(r => [String(r.attendanceDate).slice(0, 10), r]));
   const list: DayEntry[] = [];
@@ -124,7 +137,14 @@ function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: 
     else if (record) effectiveStatus = record.status ?? "Not Marked";
     else             effectiveStatus = "Absent";
 
-    list.push({ dateStr, isWeekend: isWk, isFuture: isFut, record, effectiveStatus });
+    list.push({
+      dateStr,
+      isWeekend: isWk,
+      isFuture: isFut,
+      record,
+      effectiveStatus,
+      leaveApplications: teacherLeaveApplicationsForDate(leaveApplications, dateStr),
+    });
   }
 
   return list.reverse(); // most-recent first
@@ -272,6 +292,24 @@ function DayCard({ entry }: { entry: DayEntry }) {
               )}
             </div>
           )}
+          {entry.leaveApplications.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1" aria-label="Leave application statuses">
+              {entry.leaveApplications.map(application => (
+                <span
+                  key={application.id}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                    application.status === "pending"
+                      ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                      : application.status === "approved"
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                        : "border-red-400/30 bg-red-400/10 text-red-200"
+                  }`}
+                >
+                  {teacherLeaveStatusLabel(application.status)}
+                </span>
+              ))}
+            </div>
+          )}
           {!entry.isWeekend && !entry.isFuture && !entry.record && (
             <p className="mt-1.5 text-xs text-white/20">No check-in recorded</p>
           )}
@@ -316,7 +354,10 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
           return (
             <div
               key={cell.dateStr}
-              title={entry?.effectiveStatus}
+              title={[
+                entry?.effectiveStatus,
+                ...(entry?.leaveApplications.map(application => teacherLeaveStatusLabel(application.status)) ?? []),
+              ].filter(Boolean).join(" · ")}
               className={`flex flex-col items-center py-1.5 rounded-lg ${isToday ? "bg-[#D4AF37]/15 ring-1 ring-[#D4AF37]/40" : ""}`}
             >
               <span className={`text-[11px] font-medium ${isToday ? "text-[#D4AF37]" : isWk ? "text-white/25" : "text-white/65"}`}>
@@ -325,13 +366,30 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
               {cfg && !entry?.isWeekend && !entry?.isFuture && (
                 <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${cfg.dot}`} />
               )}
+              {entry?.leaveApplications.length ? (
+                <div className="mt-0.5 flex flex-wrap justify-center gap-0.5">
+                  {entry.leaveApplications.map(application => (
+                    <span
+                      key={application.id}
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        application.status === "pending"
+                          ? "bg-amber-300"
+                          : application.status === "approved"
+                            ? "bg-emerald-300"
+                            : "bg-red-300"
+                      }`}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
       <div className="flex flex-wrap gap-3 justify-center pt-1 border-t border-white/5">
         {[["Present","bg-emerald-400"],["Late","bg-amber-400"],["Half Day","bg-orange-400"],
-          ["Absent","bg-red-400/40"],["Leave","bg-slate-400"],["Non-working","bg-sky-400/30"]].map(([lbl, cls]) => (
+          ["Absent","bg-red-400/40"],["Leave","bg-slate-400"],["Non-working","bg-sky-400/30"],
+          ["Pending Leave","bg-amber-300"],["Approved Leave","bg-emerald-300"],["Rejected Leave","bg-red-300"]].map(([lbl, cls]) => (
           <div key={lbl} className="flex items-center gap-1.5 text-[10px] text-white/45">
             <div className={`w-2 h-2 rounded-full ${cls}`} /> {lbl}
           </div>
@@ -357,7 +415,16 @@ const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════════ */
-export default function AttendanceHistoryView({ teacher, sessionId, sessionStart, sessionEnd, onBack }: { teacher: TeacherMe; sessionId: number; sessionStart: string; sessionEnd: string; onBack: () => void }) {
+export default function AttendanceHistoryView({
+  teacher, sessionId, sessionStart, sessionEnd, leaveApplications, onBack,
+}: {
+  teacher: TeacherMe;
+  sessionId: number;
+  sessionStart: string;
+  sessionEnd: string;
+  leaveApplications: ScopedTeacherLeaveApplication[];
+  onBack: () => void;
+}) {
   const today = useISTToday();
   const todayParts = dateOnlyParts(today)!;
 
@@ -414,8 +481,15 @@ export default function AttendanceHistoryView({ teacher, sessionId, sessionStart
 
   /* Full day list for the current range */
   const allDays = useMemo(() => data && sessionStart && sessionEnd
-    ? buildDayList(eff_from > sessionStart ? eff_from : sessionStart, eff_to < sessionEnd ? eff_to : sessionEnd, dbRecords, today, data.statistics)
-    : [], [eff_from, eff_to, dbRecords, today, data, sessionStart, sessionEnd]);
+    ? buildDayList(
+      eff_from > sessionStart ? eff_from : sessionStart,
+      eff_to < sessionEnd ? eff_to : sessionEnd,
+      dbRecords,
+      today,
+      data.statistics,
+      leaveApplications,
+    )
+    : [], [eff_from, eff_to, dbRecords, today, data, sessionStart, sessionEnd, leaveApplications]);
 
   /* Client-side summary computed from the full day list */
   const clientSummary = useMemo(() => {

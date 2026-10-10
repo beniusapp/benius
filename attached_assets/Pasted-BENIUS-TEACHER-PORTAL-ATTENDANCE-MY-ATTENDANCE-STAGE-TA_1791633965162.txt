@@ -1,0 +1,115 @@
+BENIUS — TEACHER PORTAL → ATTENDANCE → MY ATTENDANCE
+
+STAGE TA-4: LEAVE APPLICATION STATUS VISIBILITY
+
+IMPLEMENTATION — OPTION A
+
+The read-only investigation is complete. Implement the smallest safe correction.
+
+OBJECTIVE:
+
+When a Teacher applies for leave, the application status must also be visible in Teacher Portal → Attendance → My Attendance.
+
+SUPPORTED STATUSES:
+- Pending Leave
+- Approved Leave
+- Rejected Leave
+
+IMPORTANT:
+Leave Application Status and Attendance Status are two separate concepts. Do not merge them into one database status.
+
+1. LEAVE APPLICATION VISIBILITY
+
+In My Attendance:
+
+- Display Pending Leave for dates covered by a pending application.
+- Display Approved Leave for dates covered by an approved application.
+- Display Rejected Leave for dates covered by a rejected application.
+
+Show these as clearly labeled indicators alongside the existing attendance status.
+
+Do not replace Present, Late, Half Day, Absent or Not Marked with application statuses.
+
+A teacher may have an attendance status and a leave-application status on the same date.
+
+2. DATA SOURCE AND ISOLATION
+
+Reuse the existing Teacher Leave Application read API if it safely supports the selected Academic Session.
+
+All displayed applications must belong to:
+- Authenticated School ID.
+- Authenticated Teacher ID.
+- Selected Academic Session ID.
+
+Do not expose another Teacher's or School's applications.
+
+Do not introduce cross-session data mixing.
+
+If the existing read endpoint does not enforce these conditions, apply only the smallest necessary authorization/session correction.
+
+3. CALENDAR AND HISTORY DISPLAY
+
+- Show leave-application indicators on the relevant dates in My Attendance.
+- Support single-day and multi-day applications.
+- Preserve the existing attendance calendar and history layout.
+- Keep future approved/pending/rejected application dates visible in an appropriate leave indicator or upcoming-leave section, without generating future attendance rows.
+- Do not extend the attendance-rate denominator into future dates.
+- If multiple applications overlap, display their statuses accurately without silently choosing one.
+- Use IST dates consistently.
+
+4. ATTENDANCE CALCULATION — DO NOT CHANGE
+
+- Pending Leave must not create or update attendance.
+- Rejected Leave must not create or update attendance.
+- Approved Leave continues using the existing backend approval synchronization.
+- Do not change attendance percentage or KPI formulas.
+- Do not modify historical attendance statuses.
+- Do not change Present, Late, Half Day, Absent or Leave calculation logic.
+- Preserve existing approved-leave behavior that protects Present, Late and Half Day rows.
+
+5. REFRESH BEHAVIOR
+
+After a leave application is submitted or its approval status changes, ensure the relevant leave and attendance queries refresh when the Teacher views My Attendance.
+
+Use the existing React Query patterns.
+
+Do not introduce unnecessary polling or repeated API requests.
+
+6. TESTS
+
+Add focused, side-effect-free regression tests for:
+
+- Pending, Approved and Rejected indicators.
+- Attendance status remaining separate.
+- Single-day and multi-day applications.
+- Overlapping leave applications.
+- Future leave visibility without future attendance calculations.
+- Teacher, School and Academic Session isolation.
+- Session switching without stale leave data.
+- Existing attendance percentage and historical status behavior remaining unchanged.
+
+7. STRICT RULES
+
+- Development source changes only.
+- No database or schema changes.
+- No attendance-record mutations.
+- No automatic leave submission or approval.
+- No changes to financial or attendance formulas.
+- Do not modify the existing Apply for Leave redirection.
+- Do not restart workflows.
+- Do not deploy or publish.
+- Do not touch unrelated modules.
+- Do not work on Mobile.
+- Do not perform another broad audit.
+
+8. REPORT
+
+A. Files changed.
+B. Pending/Approved/Rejected display behavior.
+C. How future and overlapping applications are handled.
+D. Academic Session and Teacher isolation.
+E. Test results.
+F. Build results.
+G. Remaining blockers.
+
+Stop after reporting.

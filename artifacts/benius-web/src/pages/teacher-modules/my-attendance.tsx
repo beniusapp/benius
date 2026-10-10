@@ -14,6 +14,14 @@ import AttendanceHistoryView from "./attendance-history";
 import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
 import { isSessionAttendanceDate, recentSessionAttendanceDates } from "./teacher-attendance-display-dates";
 import { calculateTeacherSelfAttendanceKpis } from "./teacher-self-attendance-kpis";
+import {
+  scopeTeacherLeaveApplications,
+  teacherLeaveApplicationsForDate,
+  teacherLeaveStatusLabel,
+  upcomingTeacherLeaveApplications,
+  type ScopedTeacherLeaveApplication,
+  type TeacherLeaveApplication,
+} from "./teacher-leave-attendance-status";
 import { useISTToday } from "@/hooks/use-ist-today";
 import {
   addCalendarDays,
@@ -46,6 +54,12 @@ interface AttendancePolicyInfo {
   schoolEndTime: string;
   attendanceTarget: number;
 }
+
+const leaveApplicationStatusStyle = {
+  pending: "border-amber-400/30 bg-amber-400/10 text-amber-200",
+  approved: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
+  rejected: "border-red-400/30 bg-red-400/10 text-red-200",
+} as const;
 
 interface CorrectionReq {
   id: number;
@@ -165,8 +179,43 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       return r.ok ? r.json() : [];
     },
     enabled: selectedSessionId !== null && !!sessionStartDate,
-    staleTime: 60000,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
+
+  const { data: leaveApplicationsRaw = [], isError: leaveApplicationsError, refetch: refetchLeaveApplications } =
+    useQuery<TeacherLeaveApplication[]>({
+      queryKey: ["/api/leave/teacher", teacher.id, teacher.schoolId, selectedSessionId],
+      queryFn: async () => {
+        if (selectedSessionId === null) return [];
+        const response = await sessionFetchForViewSession(
+          `/api/leave/teacher/${teacher.id}`,
+          selectedSessionId,
+        );
+        if (!response.ok) throw new Error("Failed to load leave application statuses");
+        const applications: unknown = await response.json();
+        if (!Array.isArray(applications)) throw new Error("Invalid leave application response");
+        return applications as TeacherLeaveApplication[];
+      },
+      enabled: selectedSessionId !== null,
+      staleTime: 0,
+      refetchOnMount: "always",
+    });
+  const leaveApplications = useMemo(
+    () => scopeTeacherLeaveApplications(
+      leaveApplicationsRaw,
+      teacher.id,
+      teacher.schoolId,
+      selectedSessionId ?? -1,
+      sessionStartDate,
+      sessionEndDate,
+    ),
+    [leaveApplicationsRaw, teacher.id, teacher.schoolId, selectedSessionId, sessionStartDate, sessionEndDate],
+  );
+  const upcomingLeaveApplications = useMemo(
+    () => upcomingTeacherLeaveApplications(leaveApplications, addCalendarDays(today, 1)),
+    [leaveApplications, today],
+  );
 
   const { data: rate, isError: rateError } = useQuery<TeacherSelfRate>({
     queryKey: ["/api/teacher/self-attendance/rate", selectedSessionId, today],
@@ -273,9 +322,17 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const timeline = useMemo(() => {
     return recentSessionAttendanceDates(today, sessionStartDate, sessionEndDate).map(dateStr => {
       const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
-      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true, isHoliday: rate?.holidayDates.includes(dateStr) ?? false, rec };
+      return {
+        dateStr,
+        label: getDayLabel(dateStr),
+        isToday: dateStr === today,
+        isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true,
+        isHoliday: rate?.holidayDates.includes(dateStr) ?? false,
+        rec,
+        leaveApplications: teacherLeaveApplicationsForDate(leaveApplications, dateStr),
+      };
     });
-  }, [history, todayRec, today, rate, sessionStartDate, sessionEndDate]);
+  }, [history, todayRec, today, rate, sessionStartDate, sessionEndDate, leaveApplications]);
 
   // ── Navigable monthly calendar ───────────────────────────────────────────────
   const initialTodayParts = dateOnlyParts(today)!;
@@ -312,7 +369,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     const lastDate = calendarMonthEndDate(yr, mo + 1);
     const firstWeekday = calendarWeekday(firstDate) ?? 0;
     const lastDay = lastDate ? dateOnlyParts(lastDate)!.day : 0;
-    const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isNonWorking: boolean } | null> = [];
+    const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isNonWorking: boolean; leaveApplications: ScopedTeacherLeaveApplication[] } | null> = [];
     for (let i = 0; i < firstWeekday; i++) cells.push(null);
     for (let d = 1; d <= lastDay; d++) {
       const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -320,10 +377,17 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         cells.push(null);
         continue;
       }
-      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true });
+      cells.push({
+        d,
+        dateStr,
+        rec: history.find(r => r.attendanceDate === dateStr),
+        isToday: dateStr === today,
+        isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true,
+        leaveApplications: teacherLeaveApplicationsForDate(leaveApplications, dateStr),
+      });
     }
     return cells;
-  }, [history, today, calYear, calMonth, rate, sessionStartDate, sessionEndDate]);
+  }, [history, today, calYear, calMonth, rate, sessionStartDate, sessionEndDate, leaveApplications]);
 
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
@@ -376,7 +440,16 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   }
 
   if (showHistory) {
-    return <AttendanceHistoryView teacher={teacher} sessionId={currentSession.id} sessionStart={sessionStartDate} sessionEnd={sessionEndDate} onBack={() => setShowHistory(false)} />;
+    return (
+      <AttendanceHistoryView
+        teacher={teacher}
+        sessionId={currentSession.id}
+        sessionStart={sessionStartDate}
+        sessionEnd={sessionEndDate}
+        leaveApplications={leaveApplications}
+        onBack={() => setShowHistory(false)}
+      />
+    );
   }
 
   return (
@@ -402,6 +475,12 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         <h2 className="text-xl font-bold text-white">My Attendance</h2>
         <p className="text-xs text-white/40 mt-0.5">{formatDateOnlyWithWeekday(today, { weekday: "long", includeYear: true })}</p>
       </div>
+      {leaveApplicationsError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs text-red-200">
+          <span>Could not load leave application statuses.</span>
+          <button className="underline underline-offset-2" onClick={() => refetchLeaveApplications()}>Retry</button>
+        </div>
+      )}
 
       {/* Location badge */}
       <div className="flex items-center gap-2">
@@ -618,7 +697,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
           {(historyLoading && !history.length) ? (
             Array.from({ length: 7 }).map((_, i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-white/5" />)
           ) : (
-            timeline.map(({ dateStr, label, isToday, isNonWorking: wk, isHoliday, rec }) => {
+            timeline.map(({ dateStr, label, isToday, isNonWorking: wk, isHoliday, rec, leaveApplications: dayLeaveApplications }) => {
               const s = rec ? statusColors(rec.status) : statusColors("Not Marked");
               return (
                 <div
@@ -637,6 +716,18 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                       <p className="text-xs text-white/40 tabular-nums">{fmtTime(rec.checkInTime)}{rec.checkOutTime ? ` – ${fmtTime(rec.checkOutTime)}` : " (active)"} · {fmtDuration(rec.totalWorkingMinutes)}</p>
                     ) : (
                       <p className="text-xs text-white/25">—</p>
+                    )}
+                    {dayLeaveApplications.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1" aria-label="Leave application statuses">
+                        {dayLeaveApplications.map(application => (
+                          <span
+                            key={application.id}
+                            className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${leaveApplicationStatusStyle[application.status]}`}
+                          >
+                            {teacherLeaveStatusLabel(application.status)}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                    {!wk && (
@@ -680,13 +771,28 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
             ))}
             {calDays.map((cell, i) => {
               if (!cell) return <div key={`e-${i}`} />;
-              const s = cell.rec ? statusColors(cell.rec.status) : null;
+                const s = cell.rec ? statusColors(cell.rec.status) : null;
               return (
-                <div key={cell.dateStr} className={`flex flex-col items-center py-1.5 rounded-lg ${cell.isToday ? "bg-[#D4AF37]/15 ring-1 ring-[#D4AF37]/40" : ""}`}>
+                  <div
+                    key={cell.dateStr}
+                    title={cell.leaveApplications.map(application => teacherLeaveStatusLabel(application.status)).join(", ") || cell.rec?.status}
+                    aria-label={`${cell.dateStr}${cell.leaveApplications.length ? `: ${cell.leaveApplications.map(application => teacherLeaveStatusLabel(application.status)).join(", ")}` : ""}`}
+                    className={`flex flex-col items-center py-1.5 rounded-lg ${cell.isToday ? "bg-[#D4AF37]/15 ring-1 ring-[#D4AF37]/40" : ""}`}
+                  >
                    <span className={`text-xs font-medium ${cell.isToday ? "text-[#D4AF37]" : cell.isNonWorking ? "text-white/25" : "text-white/70"}`}>{cell.d}</span>
                    {s && !cell.isNonWorking && (
                     <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${s.dot}`} />
                   )}
+                    {cell.leaveApplications.length > 0 && (
+                      <div className="mt-0.5 flex flex-wrap justify-center gap-0.5">
+                        {cell.leaveApplications.map(application => (
+                          <span
+                            key={application.id}
+                            className={`h-1.5 w-1.5 rounded-full ${application.status === "pending" ? "bg-amber-300" : application.status === "approved" ? "bg-emerald-300" : "bg-red-300"}`}
+                          />
+                        ))}
+                      </div>
+                    )}
                    {!s && !cell.isNonWorking && cell.dateStr < today && cell.dateStr >= sessionStartDate && cell.dateStr <= sessionEndDate && (
                     <div className="w-1.5 h-1.5 rounded-full mt-0.5 bg-white/10" />
                   )}
@@ -700,8 +806,36 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                 <div className={`w-2 h-2 rounded-full ${cls}`} /> {label}
               </div>
             ))}
+            {[
+              ["Pending Leave", "bg-amber-300"],
+              ["Approved Leave", "bg-emerald-300"],
+              ["Rejected Leave", "bg-red-300"],
+            ].map(([label, cls]) => (
+              <div key={label} className="flex items-center gap-1.5 text-[10px] text-white/50">
+                <div className={`w-2 h-2 rounded-full ${cls}`} /> {label}
+              </div>
+            ))}
           </div>
         </div>
+      )}
+
+      {upcomingLeaveApplications.length > 0 && (
+        <section className="space-y-2" data-testid="section-upcoming-leave-applications">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-white/45">Upcoming Leave Applications</h3>
+          {upcomingLeaveApplications.map(({ application, startDate }) => (
+            <div key={application.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#1A2942] px-3 py-2">
+              <div>
+                <p className="text-sm font-medium text-white">{application.leaveType}</p>
+                <p className="text-xs text-white/45">
+                  {formatDateOnlyWithWeekday(startDate)} – {formatDateOnlyWithWeekday(application.endDate)}
+                </p>
+              </div>
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${leaveApplicationStatusStyle[application.status]}`}>
+                {teacherLeaveStatusLabel(application.status)}
+              </span>
+            </div>
+          ))}
+        </section>
       )}
 
       {/* ── Corrections ── */}
