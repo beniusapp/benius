@@ -1,0 +1,140 @@
+BENIUS — TEACHER PORTAL → ATTENDANCE → MY ATTENDANCE
+
+STAGE TA-1: EXISTING IMPLEMENTATION AND ATTENDANCE CALCULATION DISCOVERY
+
+MODE: STRICTLY READ-ONLY. DO NOT MODIFY ANY CODE.
+
+CONTEXT:
+
+In Teacher Portal → Attendance → My Attendance, after school hours, the interface displays:
+
+"School day ended at 17:00. Checking in now will record your attendance as Leave."
+
+Button: "Record as Leave"
+
+CURRENT ISSUE:
+Clicking "Record as Leave" directly records attendance as Leave without submitting a Leave Application.
+
+REQUIRED FUTURE BEHAVIOR:
+The button must only navigate to the existing Teacher Leave Application page.
+
+It must NOT:
+- Create or update attendance.
+- Mark the teacher as Leave.
+- Automatically apply for leave.
+- Automatically approve leave.
+- Call any attendance mutation API.
+
+The teacher must complete the existing leave-application process separately.
+
+DO NOT IMPLEMENT THIS YET.
+
+PART A — CURRENT BUTTON BEHAVIOR
+
+Investigate:
+
+1. Which component renders the "Record as Leave" button?
+2. What happens when the button is clicked?
+3. Which frontend function and backend API are called?
+4. Does it directly create/update Teacher Self-Attendance?
+5. Does it create a Leave Application or simply mark Leave?
+6. What is the existing Teacher Leave Application route?
+7. What is the smallest safe way to change this button to navigation only?
+8. Is the warning message also misleading and in need of correction?
+
+PART B — TEACHER SELF-ATTENDANCE CALCULATION
+
+Explain how attendance is determined for:
+
+1. Present — check-in, checkout and required working hours.
+2. Late — arrival cutoff and grace period.
+3. Half Day — arrival time, working duration and early checkout.
+4. Absent / Not Marked — no check-in or attendance entry.
+5. Leave — leave application, approval and attendance synchronization.
+6. Late check-in after school hours.
+7. Missing checkout.
+8. Weekends, holidays and non-working days.
+
+For every status, identify:
+- Triggering conditions.
+- Relevant attendance policy.
+- API/helper responsible.
+- Whether the status is stored or calculated dynamically.
+- Whether any automatic status updates occur.
+
+PART C — ATTENDANCE PERCENTAGE AND COUNTERS
+
+Explain how the My Attendance page calculates:
+
+- Attendance Rate (Session).
+- Present (Month).
+- Late Arrivals.
+- Half Days.
+- Leave Days.
+- Absent Days, if supported.
+- Total working days and attendance denominator.
+
+Provide the actual formulas found in source code.
+
+Explain whether Present, Late, Half Day, Leave and Absent contribute to the attendance percentage and how much.
+
+Do not assume formulas. Report only verified implementation.
+
+PART D — LEAVE APPLICATION INTEGRATION
+
+Trace the existing Teacher Leave Application workflow:
+
+- Applying for leave.
+- Pending approval.
+- Approved leave.
+- Rejected leave.
+- How approved leave affects Teacher Self-Attendance.
+- Whether submitting an application alone changes attendance.
+- Whether approval updates an existing attendance row.
+- Whether Leave can be recorded without approval.
+
+Identify any inconsistencies between leave approval and self-attendance status.
+
+PART E — ACADEMIC SESSION AND HISTORICAL ATTENDANCE
+
+Verify:
+
+- Teacher ID and School ID isolation.
+- Academic Session ID filtering.
+- Selected Academic Session behavior.
+- Whether historical attendance status is preserved after attendance-policy changes.
+- Whether current policy can recalculate or overwrite previously stored attendance.
+- Whether archived sessions are read-only.
+
+IMPORTANT:
+Our established BENIUS requirement is that historical Teacher Self-Attendance statuses must preserve their original recorded meaning. Do not propose rewriting historical statuses using current policies.
+
+PART F — REPORT
+
+Provide:
+
+A. Exact button click flow and file/line references.
+B. Existing Leave Application route.
+C. Present/Late/Half Day/Absent/Leave decision table.
+D. Exact attendance-percentage formula and counter formulas.
+E. Leave approval and attendance synchronization behavior.
+F. Academic Session and historical-status findings.
+G. Confirmed issues, risks and smallest recommended corrections.
+
+STRICT RULES:
+
+- READ-ONLY SOURCE INSPECTION ONLY.
+- Do not modify files.
+- Do not change attendance records.
+- Do not create or approve leave.
+- Do not execute mutation APIs.
+- Do not change attendance policy or formulas.
+- Do not restart workflows.
+- Do not access or modify Production.
+- Do not deploy or publish.
+- Do not work on Mobile.
+- Do not perform unrelated module audits.
+
+Explain findings clearly, with actual file and line references.
+
+STOP after reporting and wait for approval.
