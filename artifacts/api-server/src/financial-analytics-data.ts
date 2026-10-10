@@ -240,7 +240,7 @@ const FINANCIAL_ANALYTICS_ACCOUNTING_BASIS: FinancialAnalyticsAccountingBasis = 
   },
   outstanding: {
     label: "Outstanding",
-    description: "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments.",
+    description: "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments and processed refunds.",
   },
   collectionEfficiency: {
     label: "Collection efficiency",

@@ -6501,17 +6501,18 @@ export function registerFeesRoutes(app: Express) {
           fr.id                                                                       AS fee_record_id,
           fr.student_id,
           s.name                                                                      AS student_name,
-          s.class,
-          s.section,
+          ${historicalPlacementClassDisplay}                                          AS class,
+          ${historicalPlacementSectionDisplay}                                        AS section,
           fr.fee_type,
           fr.due_date,
           GREATEST(
             fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0) + COALESCE(rf.refunded, 0),
             0
-          )::int                                                                      AS amount,
+          )                                                                           AS amount,
           (${today}::date - fr.due_date::date)::int                                   AS days_overdue
         FROM fee_records fr
         JOIN students s ON s.id = fr.student_id AND s.school_id = ${schoolId}
+        ${historicalFeePlacementJoin}
         LEFT JOIN (
           SELECT fee_record_id, SUM(amount)::int AS paid
           FROM payment_records

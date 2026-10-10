@@ -25,7 +25,9 @@ import { SessionViewContext, type AcademicSession } from "@/contexts/session-vie
 import {
   getSessionDropdownPlacement,
   isLegacyAdminSessionQueryKey,
+  readSavedAdminViewSessionId,
   resolveAdminViewSession,
+  saveAdminViewSessionId,
   type SessionDropdownPlacement,
 } from "@/lib/admin-session-view";
 import {
@@ -1613,6 +1615,12 @@ export default function AdminDashboard() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
   const isPrincipalAdmin = me?.role === "admin";
+  const selectAndPersistViewSession = useCallback((session: AcademicSession | null) => {
+    if (me?.schoolId && session) {
+      saveAdminViewSessionId(me.schoolId, session.id);
+    }
+    selectViewSession(session);
+  }, [me?.schoolId, selectViewSession]);
 
   // Tenant-scoped school profile — used by the header logo.
   // Keyed by schoolId so each school gets its own cache slot; resolved server-side
@@ -1811,11 +1819,19 @@ export default function AdminDashboard() {
   });
 
   useEffect(() => {
-    const resolved = resolveAdminViewSession(sessions, selectedViewSession);
+    const schoolId = me?.schoolId;
+    const authorizedSessions = schoolId
+      ? sessions.filter((session) => session.schoolId === schoolId)
+      : [];
+    const currentSchoolSelection = selectedViewSession?.schoolId === schoolId
+      ? selectedViewSession
+      : null;
+    const savedSessionId = schoolId ? readSavedAdminViewSessionId(schoolId) : null;
+    const resolved = resolveAdminViewSession(authorizedSessions, currentSchoolSelection, savedSessionId);
     if (resolved !== selectedViewSession) {
       selectViewSession(resolved);
     }
-  }, [sessions, selectedViewSession, selectViewSession]);
+  }, [sessions, selectedViewSession, me?.schoolId, selectViewSession]);
 
   const isArchiveMode = selectedViewSession ? !selectedViewSession.isActive : false;
 
@@ -1993,7 +2009,7 @@ export default function AdminDashboard() {
     <SessionViewContext.Provider value={{
       sessions,
       selectedSession: selectedViewSession,
-      setSelectedSession: selectViewSession,
+      setSelectedSession: selectAndPersistViewSession,
       isArchiveMode,
       isSessionsLoading,
       pendingActivation: null,
@@ -2057,7 +2073,7 @@ export default function AdminDashboard() {
             <SessionSwitcher
               sessions={sessions}
               selected={selectedViewSession}
-              onSelect={selectViewSession}
+              onSelect={selectAndPersistViewSession}
               isLoading={isSessionsLoading}
             />
           </div>

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getSessionDropdownPlacement,
   isLegacyAdminSessionQueryKey,
+  readSavedAdminViewSessionId,
   resolveAdminViewSession,
+  saveAdminViewSessionId,
   updateAdminSessionList,
 } from "@/lib/admin-session-view";
 import { sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
@@ -48,6 +50,12 @@ describe("Admin Portal academic-session selection", () => {
     expect(resolveAdminViewSession([active, archived], archived)).toBe(archived);
   });
 
+  it("restores a saved authorized archive and falls back when the saved session is unavailable", () => {
+    expect(resolveAdminViewSession([active, archived], null, archived.id)).toBe(archived);
+    expect(resolveAdminViewSession([active], null, archived.id)).toBe(active);
+    expect(resolveAdminViewSession([active, archived], active, archived.id)).toBe(active);
+  });
+
   it("defaults a dashboard remount or migration return to the current active session", () => {
     expect(resolveAdminViewSession([archived, active], null)).toBe(active);
   });
@@ -55,6 +63,23 @@ describe("Admin Portal academic-session selection", () => {
   it("never retains a deleted or foreign selected session", () => {
     const foreignOrDeleted = { id: 999, isActive: false, sessionName: "Foreign" };
     expect(resolveAdminViewSession([archived, active], foreignOrDeleted)).toBe(active);
+  });
+
+  it("stores selections under the authenticated school's key and rejects invalid saved values", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+
+    saveAdminViewSessionId(1, archived.id, storage);
+    saveAdminViewSessionId(2, active.id, storage);
+    expect(readSavedAdminViewSessionId(1, storage)).toBe(archived.id);
+    expect(readSavedAdminViewSessionId(2, storage)).toBe(active.id);
+    expect(readSavedAdminViewSessionId(3, storage)).toBeNull();
+    values.set("benius-admin-view-session:1", "not-a-session");
+    expect(readSavedAdminViewSessionId(1, storage)).toBeNull();
+    expect(readSavedAdminViewSessionId(0, storage)).toBeNull();
   });
 
   it("targets only legacy session-scoped module caches on a selector change", () => {

@@ -64,8 +64,18 @@ export interface RenderFinancialAnalyticsPdfOptions {
 // ── Formatters ─────────────────────────────────────────────────────────────────
 
 function fmtINR(n: number): string {
+  const decimal = Math.abs(n).toLocaleString("en-US", {
+    useGrouping: false,
+    maximumFractionDigits: 20,
+  });
+  const [, fractionPart = ""] = decimal.split(".");
+  let paise = Number(fractionPart.slice(0, 2).padEnd(2, "0"));
+  if (Number(fractionPart.charAt(2) || "0") >= 5) paise += 1;
+  const hasPaise = paise % 100 !== 0;
+
   return "\u20B9" + new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
+    minimumFractionDigits: hasPaise ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(n);
 }
 

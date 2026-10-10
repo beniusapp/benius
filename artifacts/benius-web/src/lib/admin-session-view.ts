@@ -3,6 +3,39 @@ export interface ViewSession {
   isActive: boolean;
 }
 
+const ADMIN_VIEW_SESSION_STORAGE_PREFIX = "benius-admin-view-session";
+
+export function readSavedAdminViewSessionId(
+  schoolId: number,
+  storage?: Pick<Storage, "getItem">,
+): number | null {
+  if (!Number.isSafeInteger(schoolId) || schoolId <= 0) return null;
+  try {
+    const target = storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
+    const raw = target?.getItem(`${ADMIN_VIEW_SESSION_STORAGE_PREFIX}:${schoolId}`);
+    if (!raw || !/^\d+$/.test(raw)) return null;
+    const id = Number(raw);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAdminViewSessionId(
+  schoolId: number,
+  sessionId: number,
+  storage?: Pick<Storage, "setItem">,
+): void {
+  if (!Number.isSafeInteger(schoolId) || schoolId <= 0
+    || !Number.isSafeInteger(sessionId) || sessionId <= 0) return;
+  try {
+    const target = storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
+    target?.setItem(`${ADMIN_VIEW_SESSION_STORAGE_PREFIX}:${schoolId}`, String(sessionId));
+  } catch {
+    // Session selection remains usable in memory when browser storage is unavailable.
+  }
+}
+
 export function updateAdminSessionList<T extends ViewSession & { status?: string }>(
   current: T[] | undefined,
   activated: T,
@@ -51,14 +84,19 @@ export function isLegacyAdminSessionQueryKey(queryKey: readonly unknown[]): bool
 export function resolveAdminViewSession<T extends ViewSession>(
   sessions: readonly T[],
   selected: T | null,
+  savedSessionId: number | null = null,
 ): T | null {
   if (sessions.length === 0) return null;
 
   const refreshedSelection = selected
     ? sessions.find((session) => session.id === selected.id)
     : undefined;
+  const savedSelection = savedSessionId == null
+    ? undefined
+    : sessions.find((session) => session.id === savedSessionId);
 
   return refreshedSelection
+    ?? savedSelection
     ?? sessions.find((session) => session.isActive)
     ?? sessions[0];
 }

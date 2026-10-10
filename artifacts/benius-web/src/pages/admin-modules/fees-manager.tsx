@@ -6693,7 +6693,7 @@ interface AgingStudent {
   section: string;
   fee_type: string;
   due_date: string;
-  amount: number;
+  amount: string;
   days_overdue: number;
 }
 
@@ -7337,7 +7337,7 @@ function AgingDefaultersDrawer({
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="text-white font-black text-base tabular-nums leading-tight">
-                            {fmt(s.amount)}
+                            {fmt(Number(s.amount))}
                           </p>
                           <p className="text-[10px] mt-0.5 font-bold" style={{ color: bucket.color }}>
                             {s.days_overdue}d overdue

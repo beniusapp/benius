@@ -1,0 +1,174 @@
+# BENIUS — STAGE FA-R6
+## Final Financial Analytics Accuracy and Academic Session Corrections
+### STRICTLY LIMITED IMPLEMENTATION
+
+BENIUS is a multi-tenant School Management Information System in DEVELOPMENT.
+
+The FA-R5 read-only audit identified confirmed defects.
+
+The owner authorizes only the narrowly scoped corrections listed below.
+
+**Do not modify any financial business logic, payment/refund processing, invoice status, database schema, or stored records.**
+
+## 1. Historical placement in Receivables Aging detail
+
+File:
+`artifacts/api-server/src/fees-routes.ts`
+
+Replace current Student Registry class/section attribution in the Financial Analytics aging drill-down with the exact historical enrollment for:
+
+- Authenticated school ID.
+- Student ID.
+- Selected invoice Academic Session ID.
+
+Follow the existing historical placement pattern used by Financial Analytics Class Performance.
+
+Requirements:
+
+- No current-class fallback.
+- Missing or ambiguous enrollment displays unavailable placement.
+- Preserve invoice/payment/refund amounts.
+- Preserve existing aging buckets.
+- Preserve authenticated-school and session filtering.
+- Ensure class/section filters use historical placement rather than current placement.
+
+## 2. Preserve selected Academic Session after refresh
+
+Files:
+`artifacts/benius-web/src/pages/admin-dashboard.tsx`
+
+`artifacts/benius-web/src/lib/admin-session-view.ts`
+
+Implement the smallest safe session-selection persistence correction.
+
+Requirements:
+
+- Persist the manually selected Academic Session for the authenticated school.
+- Restore it after refresh only after validating the session against that school's authorized session list.
+- Do not restore a session belonging to another school.
+- If the stored session is deleted, invalid, or unavailable, use the existing default-selection behavior.
+- Do not allow stale session state to display data from another school.
+- Preserve the existing Active/Archived session restrictions.
+- Do not modify Academic Session records.
+- Avoid changing session behavior in unrelated modules.
+
+Before changing shared session-selection code, identify affected consumers. If the change cannot be safely scoped without altering unrelated portal behavior, STOP and report the blocker.
+
+## 3. Preserve monetary precision in aging detail
+
+File:
+`artifacts/api-server/src/fees-routes.ts`
+
+Remove the whole-rupee truncation in the Financial Analytics aging detail.
+
+Requirements:
+
+- Preserve rupees and paise.
+- Use the existing refund-adjusted outstanding formula.
+- Do not change processed-refund eligibility rules.
+- Do not change rounding in financial calculations.
+- Ensure summary and detail values reconcile when their populations and filters match.
+- Avoid JavaScript floating-point accumulation errors where possible.
+
+## 4. Financial Analytics PDF currency presentation
+
+File:
+`artifacts/api-server/src/financial-analytics-pdf.ts`
+
+Align displayed monetary precision with the dashboard's existing currency presentation convention.
+
+Do not change the underlying numerical values, aggregation, or PDF content structure.
+
+If the dashboard itself uses inconsistent monetary formatting, report the issue instead of introducing a new global formatting policy.
+
+## 5. Outstanding description
+
+File:
+`artifacts/api-server/src/financial-analytics-data.ts`
+
+Update only the descriptive text to clarify that outstanding reflects successful payments and processed refunds.
+
+Do not change the formula.
+
+## 6. Explicitly excluded
+
+Do not change:
+
+- Gross Collected.
+- Net Collected.
+- Collection Efficiency.
+- Due This Period.
+- Online/Offline Collection.
+- Refund initiation.
+- Razorpay integrations.
+- Payment verification.
+- Payment/refund webhooks.
+- Late-fee business rules.
+- Stored invoice statuses.
+- Archived financial records.
+- Invoice or receipt generation.
+- Database schema or records.
+- Student Fees financial calculations.
+- Ledger financial calculations.
+- Teacher Portal.
+- Mobile application.
+
+Do not implement aging pagination or modify its 200-row cap in this stage.
+
+## 7. Focused regression verification
+
+Verify:
+
+1. Historical class/section for an archived-session invoice.
+2. Promoted student with different current and historical classes.
+3. Missing historical enrollment.
+4. Ambiguous historical enrollment.
+5. Cross-school historical enrollment isolation.
+6. Active → Archived → refresh.
+7. Archived A → Archived B → refresh.
+8. Invalid saved session fallback.
+9. Switching schools without restoring another school's session.
+10. Aging detail with ₹0.50, ₹1.25, and other fractional amounts.
+11. Processed partial refund.
+12. Pending and failed refunds.
+13. Aging summary/detail reconciliation.
+14. PDF amount presentation.
+15. No-refund calculation regression.
+16. Existing payment and receipt behavior unchanged.
+
+Use focused tests and existing safe test infrastructure.
+
+Do not access Development or Production financial databases.
+
+Do not create new PostgreSQL clusters.
+
+Do not initiate payment/refund operations.
+
+## 8. Required completion report
+
+Provide:
+
+- Exact files changed.
+- Exact defects corrected.
+- Before/after examples.
+- Academic Session restoration behavior.
+- Historical placement behavior.
+- Precision verification.
+- Tests passed/failed.
+- API and Web build results.
+- Any remaining unverified behavior.
+- Confirmation that financial formulas and payment/refund logic were not modified.
+
+Distinguish SOURCE VERIFIED, UNIT TEST PASSED, DATABASE VERIFIED, SIGNED-IN UI VERIFIED, and NOT VERIFIED.
+
+## 9. Mandatory stop
+
+After implementation and focused verification, STOP.
+
+Do not deploy.
+
+Do not restart workflows.
+
+Do not modify unrelated modules.
+
+Wait for owner review.
