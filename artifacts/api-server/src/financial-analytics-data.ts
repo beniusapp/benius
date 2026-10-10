@@ -60,7 +60,7 @@ export const ANALYTICS_TZ = SCHOOL_TIME_ZONE;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** Pure positive-integer denomination key: only digit characters, no leading
  *  zeros unless the whole value is "0" (which we exclude by the >0 check). */
-const DENOM_KEY_RE = /^\d+$/;
+const DENOM_KEY_RE = /^[1-9]\d*$/;
 const MAX_CUSTOM_DAYS = 5 * 366; // 5 years
 
 // ── Public types ───────────────────────────────────────────────────────────────
@@ -840,10 +840,10 @@ export async function buildFinancialAnalytics(
           const denomNum = parseInt(denom, 10);
           // qty may arrive as number or numeric string from JSONB
           const qtyRaw = typeof qty === "number" ? qty : Number(qty);
-          const qtyNum = Number.isInteger(qtyRaw) ? qtyRaw : Math.trunc(qtyRaw);
+          const qtyNum = qtyRaw;
           if (
             Number.isFinite(denomNum) && denomNum > 0 &&
-            Number.isInteger(qtyNum)  && qtyNum  > 0
+            Number.isFinite(qtyNum) && Number.isInteger(qtyNum) && qtyNum > 0
           ) {
             const existing = denomAgg.get(denomNum) ?? 0;
             denomAgg.set(denomNum, existing + qtyNum);

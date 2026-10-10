@@ -552,7 +552,7 @@ function renderClassesSection(ctx: Ctx): void {
     (CONTENT_W - 80) / 4,
     (CONTENT_W - 80) / 4,
   ];
-  drawTableHeader(ctx, ["Class / Section", "Due This Period", "Collected", "Outstanding", "Efficiency"], w);
+  drawTableHeader(ctx, ["Class", "Due This Period", "Collected", "Outstanding", "Efficiency"], w);
   cw.forEach((r, i) => {
     const eff = r.billed > 0 ? `${Math.round((r.grossCollected / r.billed) * 100)}%` : "\u2014";
     drawTableRow(
