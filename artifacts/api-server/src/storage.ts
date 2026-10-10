@@ -68,6 +68,11 @@ import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
 import { studentWorkCreatedAtDateSql, type StudentWorkDateMode } from "./student-work-date";
 import {
+  buildLedgerPaymentInvoiceJoin,
+  buildLedgerPaymentSessionScope,
+  mapLedgerPaymentListRow,
+} from "./ledger-payment-list-query";
+import {
   teacherStudentLeaveEnrollmentJoin,
   teacherStudentLeaveAssignments,
   teacherStudentLeaveQueueSessionScope,
@@ -10353,19 +10358,38 @@ export class DatabaseStorage {
     return rec;
   }
 
-  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number; sessionId?: number | null }) {
+  async getPaymentRecordsBySchool(schoolId: number, opts?: {
+    studentId?: number;
+    feeRecordId?: number;
+    sessionId?: number | null;
+    ledgerReadScope?: boolean;
+  }) {
     const conditions: any[] = [eq(paymentRecords.schoolId, schoolId)];
     if (opts?.studentId) conditions.push(eq(paymentRecords.studentId, opts.studentId));
     if (opts?.feeRecordId !== undefined) conditions.push(eq(paymentRecords.feeRecordId, opts.feeRecordId));
-    if (opts?.sessionId != null) conditions.push(eq(paymentRecords.sessionId, opts.sessionId!));
+    if (opts?.sessionId != null) {
+      conditions.push(
+        opts.ledgerReadScope
+          ? buildLedgerPaymentSessionScope(opts.sessionId)
+          : eq(paymentRecords.sessionId, opts.sessionId),
+      );
+    }
     // LEFT JOIN fee_records to resolve invoice_number without adding a column to payment_records.
     // Orphan records (fee_record_id = NULL) or historical records (invoice_number = NULL) → invoiceNumber: null → shown as "—" in UI.
     const rows = await db
       .select()
       .from(paymentRecords)
-      .leftJoin(feeRecords, eq(paymentRecords.feeRecordId, feeRecords.id))
+      .leftJoin(
+        feeRecords,
+        opts?.ledgerReadScope
+          ? buildLedgerPaymentInvoiceJoin()
+          : eq(paymentRecords.feeRecordId, feeRecords.id),
+      )
       .where(and(...conditions))
       .orderBy(desc(paymentRecords.createdAt));
+    if (opts?.ledgerReadScope) {
+      return rows.map(mapLedgerPaymentListRow);
+    }
     return rows.map(r => ({ ...r.payment_records, invoiceNumber: r.fee_records?.invoiceNumber ?? null }));
   }
 

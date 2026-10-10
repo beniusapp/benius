@@ -1459,7 +1459,12 @@ export function registerFeesRoutes(app: Express) {
     const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
     if (sessionFilter === undefined) return;
     if (sessionFilter === null) return res.json([]);
-    const opts: { studentId?: number; feeRecordId?: number; sessionId?: number | null } = {};
+    const opts: {
+      studentId?: number;
+      feeRecordId?: number;
+      sessionId?: number | null;
+      ledgerReadScope?: boolean;
+    } = { ledgerReadScope: true };
     if (studentId) opts.studentId = parseInt(studentId);
     if (feeRecordId) {
       const parsedFeeId = parseInt(feeRecordId);

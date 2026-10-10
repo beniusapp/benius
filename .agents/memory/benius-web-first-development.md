@@ -8,3 +8,9 @@ For normal BENIUS requests, prioritize the Web app and only shared backend/datab
 **Why:** The user set this direction to finish and stabilize Web before serious Mobile development.
 
 **How to apply:** Scope ordinary features and fixes to Web plus genuinely required backend/database work. Do not automatically synchronize Web changes into Mobile.
+
+When a shared backend method serves both Web and Mobile, preserve Mobile's existing behavior by default and opt the Web caller into Web-specific semantics explicitly.
+
+**Why:** Shared-method defaults can silently change a frozen Mobile API even when no Mobile source file is edited.
+
+**How to apply:** Check all call sites before changing shared query behavior; make new Web-only filtering or response semantics explicit at the Web call site.
