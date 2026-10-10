@@ -10,6 +10,7 @@ const expectedReceiptColumns = [
   "complaint_id",
   "read_at",
 ];
+const replyCursorColumn = "last_read_note_id";
 
 function createEmptySchemaPool() {
   return {
@@ -37,5 +38,35 @@ test("enabled receipt tracking requires every receipt-table column", async () =>
       .map(({ column }) => column)
       .sort(),
     [...expectedReceiptColumns].sort(),
+  );
+});
+
+test("reply-aware cursor stays optional while its independent gate is disabled", async () => {
+  const missing = await validateSchemaColumns(createEmptySchemaPool(), {
+    studentComplaintReadReceiptsEnabled: true,
+    studentComplaintReplyAwareEnabled: false,
+  });
+
+  assert.deepEqual(
+    missing
+      .filter(({ table }) => table === receiptTable)
+      .map(({ column }) => column)
+      .sort(),
+    [...expectedReceiptColumns].sort(),
+  );
+});
+
+test("reply-aware gate requires the new cursor column", async () => {
+  const missing = await validateSchemaColumns(createEmptySchemaPool(), {
+    studentComplaintReadReceiptsEnabled: true,
+    studentComplaintReplyAwareEnabled: true,
+  });
+
+  assert.deepEqual(
+    missing
+      .filter(({ table }) => table === receiptTable)
+      .map(({ column }) => column)
+      .sort(),
+    [...expectedReceiptColumns, replyCursorColumn].sort(),
   );
 });

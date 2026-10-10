@@ -23,6 +23,7 @@ import { rejectBearerOutsideMobileAuth, shouldLogJsonResponseBody } from "./mobi
 import { ensureMobileAuthSchema } from "./mobile-auth-schema";
 import { runStartupMaintenance } from "./startup-maintenance-safety";
 import { studentComplaintReadReceiptsEnabled } from "./student-complaint-read-receipts";
+import { studentComplaintReplyAwareEnabled } from "./student-complaint-reply-cursor-policy";
 
 const app = express();
 const httpServer = createServer(app);
@@ -1411,6 +1412,7 @@ app.use((req, res, next) => {
   }
   await assertNoSchemaDrift(pool, {
     studentComplaintReadReceiptsEnabled: studentComplaintReadReceiptsEnabled(),
+    studentComplaintReplyAwareEnabled: studentComplaintReplyAwareEnabled(),
   });
 
   await registerRoutes(httpServer, app);

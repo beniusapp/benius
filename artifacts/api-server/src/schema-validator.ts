@@ -50,6 +50,8 @@ export interface SchemaValidationOptions {
    * callers that do not explicitly supply feature state fail closed.
    */
   studentComplaintReadReceiptsEnabled?: boolean;
+  /** Reply-aware cursor is optional until its separate migration is applied and enabled. */
+  studentComplaintReplyAwareEnabled?: boolean;
 }
 
 /**
@@ -111,10 +113,21 @@ export async function validateSchemaColumns(
 ): Promise<ExpectedColumn[]> {
   const requireStudentComplaintReadReceipts =
     options.studentComplaintReadReceiptsEnabled ?? true;
-  const expected = buildExpectedColumns().filter(({ table }) =>
-    requireStudentComplaintReadReceipts ||
-    table !== "student_complaint_read_receipts"
-  );
+  const requireStudentComplaintReplyCursor =
+    options.studentComplaintReplyAwareEnabled ?? false;
+  const expected = buildExpectedColumns().filter(({ table, column }) => {
+    if (table === "student_complaint_read_receipts" && !requireStudentComplaintReadReceipts) {
+      return false;
+    }
+    if (
+      table === "student_complaint_read_receipts"
+      && column === "last_read_note_id"
+      && !requireStudentComplaintReplyCursor
+    ) {
+      return false;
+    }
+    return true;
+  });
   const actual = await fetchActualColumns(pool);
 
   const missing = expected.filter(

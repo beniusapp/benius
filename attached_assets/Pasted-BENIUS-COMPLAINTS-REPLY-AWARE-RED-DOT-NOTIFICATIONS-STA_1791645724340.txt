@@ -1,0 +1,157 @@
+BENIUS — COMPLAINTS REPLY-AWARE RED-DOT NOTIFICATIONS
+STAGE 1 — SAFE CODE PREPARATION ONLY
+
+PRODUCT DECISION — FINAL
+
+Student Dashboard → Complaints must display a red notification dot whenever the authenticated Student has an unread Teacher-to-Student complaint or a new Student-visible Teacher/Admin reply.
+
+EXPECTED BEHAVIOR
+
+1. New Teacher-to-Student complaint → red dot appears.
+2. Student successfully opens the complaint and its messages load → complaint becomes read.
+3. If no unread complaints remain → red dot disappears.
+4. New Teacher/Admin reply to a previously read complaint → red dot reappears.
+5. Student opens and reads the updated complaint → red dot disappears when no unread complaints remain.
+6. Student's own replies must not trigger the dot.
+7. Resolved complaints remain visible in history and may become unread again when new qualifying replies arrive.
+8. Multiple unread complaints keep the dot visible until all are read.
+9. Read state persists across refreshes, logins and devices.
+
+IMPLEMENTATION SCOPE
+
+A. DATABASE SCHEMA PREPARATION
+
+Prepare a new additive migration after migration 019.
+
+- Introduce a stable last-read qualifying note cursor for each receipt.
+- Preserve the existing receipt primary key and all existing complaint records.
+- Add only indexes demonstrably needed for efficient scoped lookups.
+- Do not modify existing receipt data yet.
+- Do not perform any automatic legacy backfill.
+- Do not execute the migration.
+- Do not use drizzle push.
+
+Investigate the safest cursor ordering for concurrent replies. Do not assume note IDs always represent commit order.
+
+B. LEGACY RECEIPT COMPATIBILITY
+
+Existing receipts contain read_at but no note cursor.
+
+Prepare and document a safe compatibility strategy that:
+
+- Does not automatically make all previously read complaints unread.
+- Does not silently mark genuinely new replies as read.
+- Accounts for TIMESTAMP WITHOUT TIME ZONE versus TIMESTAMPTZ.
+- Avoids guessing timestamp conversions.
+- Handles ambiguous historical data conservatively.
+
+If a reliable legacy backfill cannot be proven, provide explicit alternatives and STOP for my decision.
+
+Do not execute any backfill.
+
+C. BACKEND
+
+Prepare a dedicated authenticated unread-count endpoint for the Student Dashboard.
+
+- Count unread complaints, not individual replies.
+- Include qualifying Student-visible Teacher/Admin notes.
+- Exclude Student-authored notes.
+- Reuse the existing authorized From Teachers inbox scope.
+- Enforce authenticated School ID, Student ID and selected Academic Session ID.
+- Do not expose another student's complaint information.
+- Preserve idempotent receipt handling.
+- Ensure the read cursor advances only to activity actually loaded by the Student.
+- Do not acknowledge replies arriving after the Student's observed snapshot.
+- Do not change existing complaint status or history.
+
+D. FRONTEND
+
+Change only the Complaints dashboard red-dot source when the new reply-aware feature is enabled.
+
+- Use the dedicated unread-count endpoint.
+- Do not clear the red dot simply because the Complaints module opens.
+- Mark an individual complaint read only after its authorized details and notes load successfully.
+- Invalidate/refetch unread-count data after successful acknowledgement.
+- Refresh on Dashboard mount/focus and selected-session changes.
+- Use a cache key that includes Student identity and Academic Session.
+- Handle loading and API failures without incorrectly displaying zero unread.
+
+Preserve existing module-level seen cursors.
+
+Homework, Classwork and Noticeboard must remain unchanged.
+
+E. SAFE FEATURE GATING
+
+The existing receipt feature is already enabled in Development.
+
+Introduce a separate gate for the NEW reply-aware behavior.
+
+IMPORTANT:
+
+- Do not disable or break existing receipt functionality.
+- The new gate must remain OFF by default.
+- Until the new migration is applied and verified, the application must continue using the existing behavior.
+- Startup schema validation must not require the new optional column while the new gate is disabled.
+- When enabled, schema validation must require the new column.
+- Production behavior must remain unchanged.
+
+F. TESTS
+
+Add focused tests for:
+
+- New complaint unread.
+- Successful open clears unread.
+- New Teacher reply makes it unread again.
+- New Admin reply makes it unread again.
+- Student reply does not.
+- Resolved complaint remains in history.
+- Multiple unread complaints.
+- Reply arriving concurrently with read acknowledgement.
+- Cursor ordering and timestamp ties.
+- Legacy receipts and ambiguous historical data.
+- School, Student and Academic Session isolation.
+- API failure and disabled-feature fallback.
+- Other dashboard red dots unchanged.
+- Startup schema validation with new gate ON and OFF.
+
+Run focused tests and relevant API/Web builds.
+
+Report existing typecheck failures separately from newly introduced errors.
+
+STRICT EXECUTION LIMITS
+
+AUTHORIZED:
+- Prepare code changes.
+- Prepare the new migration file.
+- Add focused tests.
+- Run non-destructive tests and builds.
+
+NOT AUTHORIZED:
+- Execute SQL.
+- Apply migrations.
+- Backfill or update existing records.
+- Change environment variables.
+- Enable the new feature.
+- Restart services.
+- Deploy or publish.
+- Modify Production.
+- Modify Mobile.
+- Change unrelated modules.
+
+If a correct implementation depends on unresolved legacy-data or concurrency decisions, prepare the safe independent portions only and stop before implementing the dependent behavior.
+
+FINAL REPORT
+
+Provide:
+
+1. Files changed.
+2. New migration filename and exact schema changes.
+3. Legacy receipt compatibility proposal.
+4. Concurrency protection strategy.
+5. Tests and build results.
+6. Confirmation that the new feature remains disabled.
+7. Any remaining decisions or blockers.
+
+STOP after Stage 1.
+
+Wait for my separate approval before any migration, legacy backfill, feature activation or restart.

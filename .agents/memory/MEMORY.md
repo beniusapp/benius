@@ -3,6 +3,7 @@
 - [BENIUS Web-first development](benius-web-first-development.md) — prioritize Web and required backend work; keep Mobile feature work frozen until explicitly requested.
 - [Native mobile auth boundary](native-mobile-auth-boundary.md) — keep mobile bearer auth separate from web cookies; browser preview is not a sign-in client.
 - [Student content boundaries](student-content-boundaries.md) — historical cohort controls session reads; new Student uploads need owner/reviewer-gated downloads.
+- [Reply-aware Student Complaint alerts](student-complaint-reply-aware-alerts.md) — Complaints dot must track unread Teacher-to-Student items and newer visible Teacher/Admin replies, never Student replies.
 - [Current Student placement](current-student-placement.md) — authorized Web Registry Add or placement-changing Edit synchronizes only the active-session enrollment; preserve history.
 - [Web promotion proposals and Mobile isolation](web-promotion-proposals-mobile-isolation.md) — keep new Web proposals in audit events, not the shared raw override table consumed by Mobile.
 - [Expo preview font loading](expo-preview-font-loading.md) — keep optional custom fonts from blocking the first visible Expo screen.
