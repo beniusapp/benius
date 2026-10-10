@@ -6,6 +6,7 @@ import {
   adminDashboardNotificationQueryKeys,
   refetchAdminNotificationSources,
   shouldShowAdminActionNotifications,
+  isUnresolvedComplaintStatus,
   summarizeAdminNotifications,
   type AdminNotificationQueries,
 } from "./admin-dashboard-notifications";
@@ -22,25 +23,23 @@ const emptyQueries = (): AdminNotificationQueries => ({
   complaints: ready([]),
 });
 
-test("all five actionable sources count only unresolved pending work and parent badges use the same sources", () => {
+test("seven actionable submodules count unresolved work and complaint aggregates deduplicate IDs", () => {
   const q = emptyQueries();
-  q.teacherLeaves.data = [{ status: "pending" }, { status: "approved" }];
-  q.studentLeaves.data = [{ status: "forwarded_to_admin" }, { status: "approved" }];
-  q.gallery.data = [{ approved: false }, { approved: true }];
-  q.ebooks.data = [{ verificationStatus: "pending" }, { verificationStatus: "verified" }];
+  q.teacherLeaves.data = [{ id: 1, status: "pending" }, { id: 2, status: "approved" }];
+  q.studentLeaves.data = [{ id: 3, status: "forwarded_to_admin" }, { id: 4, status: "approved" }];
+  q.gallery.data = [{ id: 5, approved: false }, { id: 6, approved: true }];
+  q.ebooks.data = [{ id: 7, verificationStatus: "pending" }, { id: 8, verificationStatus: "verified" }];
   q.complaints.data = [
-    { status: "open" },
-    { status: "in_progress" },
-    { status: "Resolved" },
+    { id: 9, status: "Pending", complaintType: "teacher-to-admin" },
+    { id: 10, status: "Investigating", complaintType: "student-to-staff" },
+    { id: 11, status: "Escalated", complaintType: "student-peer-report", escalatedToPrincipal: true },
+    { id: 12, status: "Resolved", complaintType: "teacher-to-admin" },
   ];
 
   const summary = summarizeAdminNotifications(q);
   assert.deepEqual(summary.sources.map(({ id, count }) => [id, count]), [
-    ["teacher-leave", 1],
-    ["student-leave", 1],
-    ["gallery", 1],
-    ["ebooks", 1],
-    ["complaints", 2],
+    ["teacher-leave", 1], ["student-leave", 1], ["gallery", 1], ["ebooks", 1],
+    ["private-complaints", 1], ["student-grievances", 1], ["escalated-complaints", 1],
   ]);
   assert.equal(summary.total, 6);
   assert.deepEqual(summary.parentBadges, {
@@ -58,7 +57,9 @@ test("each actionable item uses its real module and supported submodule destinat
       ["student-leave", "/admin-dashboard/leave-requests/student-leave"],
       ["gallery", "/admin-dashboard/approval-center/gallery-hub"],
       ["ebooks", "/admin-dashboard/approval-center/ebook"],
-      ["complaints", "/admin-dashboard/complaint-hub"],
+      ["private-complaints", "/admin-dashboard/complaint-hub/private"],
+      ["student-grievances", "/admin-dashboard/complaint-hub/grievances"],
+      ["escalated-complaints", "/admin-dashboard/complaint-hub/escalated"],
     ],
   );
 });
@@ -76,8 +77,8 @@ test("session-owned query keys change with session; school-wide sources do not",
 
 test("partial and complete errors preserve known counts but never claim a complete aggregate", () => {
   const q = emptyQueries();
-  q.teacherLeaves.data = [{ status: "pending" }];
-  q.complaints = { data: [{ status: "open" }], isError: true, isLoading: false };
+  q.teacherLeaves.data = [{ id: 1, status: "pending" }];
+  q.complaints = { data: [{ id: 2, status: "Pending", complaintType: "teacher-to-admin" }], isError: true, isLoading: false };
   q.ebooks = { isError: true, isLoading: false };
 
   const partial = summarizeAdminNotifications(q);
@@ -135,11 +136,20 @@ test("dashboard refreshes deliberately without polling and unresolved work is no
   assert.equal(calls, 5);
 
   const q = emptyQueries();
-  q.teacherLeaves.data = [{ status: "pending" }];
+  q.teacherLeaves.data = [{ id: 1, status: "pending" }];
   const before = summarizeAdminNotifications(q);
   const afterOpeningModule = summarizeAdminNotifications(q);
   assert.equal(before.sources.find(s => s.id === "teacher-leave")?.count, 1);
   assert.deepEqual(afterOpeningModule, before);
+});
+
+test("complaint status normalization counts the canonical active states and excludes terminal resolution", () => {
+  assert.equal(isUnresolvedComplaintStatus(" Pending "), true);
+  assert.equal(isUnresolvedComplaintStatus("investigating"), true);
+  assert.equal(isUnresolvedComplaintStatus("Escalated"), true);
+  assert.equal(isUnresolvedComplaintStatus("in progress"), true);
+  assert.equal(isUnresolvedComplaintStatus("Resolved"), false);
+  assert.equal(isUnresolvedComplaintStatus(null), false);
 });
 
 test("Support Staff do not see the cross-module Action Required aggregate", () => {

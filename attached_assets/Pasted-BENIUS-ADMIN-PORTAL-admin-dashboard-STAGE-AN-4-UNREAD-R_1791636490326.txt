@@ -1,0 +1,265 @@
+BENIUS — ADMIN PORTAL → /admin-dashboard
+
+STAGE AN-4: UNREAD RED DOTS + ACTION REQUIRED ACCURACY
+
+MODE: FOCUSED IMPLEMENTATION — DEVELOPMENT ONLY
+
+CONTEXT:
+
+Stage AN-2 implemented Action Required with five existing pending-action sources.
+
+Stage AN-3 confirmed:
+- Existing numeric badges represent unresolved work, not unread notifications.
+- No Admin-specific seen/unseen state exists.
+- Complaint Hub's pending count misses current active complaint statuses.
+- Complaint Hub has three actual submodules.
+- Approval Center and Leave Requests already have working pending counts.
+- Noticeboard has no confirmed actionable notification source.
+
+Do not repeat the broad investigation.
+
+OBJECTIVE:
+
+Introduce separate unread red-dot indicators for actionable Admin notifications while preserving accurate pending-action counts.
+
+PART 1 — SEPARATE TWO NOTIFICATION TYPES
+
+A. UNREAD RED DOT
+
+- Indicates new actionable items that the Admin has not yet viewed.
+- Appears on the relevant submodule and its parent module.
+- Disappears when the Admin opens the corresponding submodule and the current items have been successfully loaded and displayed.
+- Opening one submodule must not clear another submodule's unread red dot.
+- A parent red dot disappears only when all its relevant child notifications have been viewed.
+- A newly arriving item must produce a new unread indicator after data refresh.
+- A failed or still-loading request must never mark items as seen.
+
+B. PENDING-ACTION NUMERIC COUNT
+
+- Represents unresolved work.
+- Must remain visible after the Admin opens a module.
+- Decreases only when the underlying item is approved, rejected, resolved, removed, or otherwise leaves the applicable pending state.
+- Must remain the source of truth for Action Required.
+
+Do not combine unread counts with pending counts.
+
+PART 2 — MODULE AND SUBMODULE COVERAGE
+
+Implement unread red dots for these actionable submodules:
+
+COMPLAINT HUB:
+- Private Teacher Messages
+- Student Staff Grievances
+- Escalated Reports
+
+APPROVAL CENTER:
+- Gallery Hub
+- E-Book Library
+
+LEAVE REQUESTS:
+- Teacher Leave
+- Student Leave
+
+Display an unread red dot on each relevant submodule navigation tile/tab and aggregate it to its parent module.
+
+Preserve existing numeric pending counts.
+
+Do not add unread red dots to:
+- Noticeboard
+- Leave Approval History
+- Exam Controller
+- ID Card Generator
+- Other unrelated modules
+
+PART 3 — FIX COMPLAINT HUB PENDING COUNTS
+
+The Stage AN-3 investigation confirmed a status mismatch.
+
+The dashboard currently counts only:
+- open
+- in_progress
+
+But Complaint Hub's actual workflow uses statuses including:
+- Pending
+- Investigating
+- Escalated
+- Resolved
+
+Inspect the existing canonical complaint status definitions and actual Complaint Hub categorization.
+
+Use one consistent unresolved-status rule across:
+- Complaint Hub parent numeric badge
+- Complaint submodule pending counts
+- Action Required
+- Unread red-dot eligibility
+
+Preserve the existing meaning of Resolved and any other terminal statuses.
+
+Do not modify complaint records or status-transition workflows.
+
+Ensure each complaint is counted only once in the aggregate, even if it qualifies for more than one displayed category.
+
+Use the existing Complaint Hub category logic rather than inventing new complaint types.
+
+PART 4 — COMPLAINT HUB ACTION REQUIRED BREAKDOWN
+
+Replace the single aggregate complaint Action Required row with separate rows for:
+
+- Private Teacher Messages
+- Student Staff Grievances
+- Escalated Reports
+
+Each row must:
+- Display the correct unresolved count.
+- Navigate directly to its corresponding Complaint Hub tab.
+- Respect the authenticated School and selected Academic Session.
+- Preserve existing permissions.
+
+Use actual route/tab identifiers from the code.
+
+Do not double-count overlapping complaints in the parent or total Action Required count.
+
+If existing complaint category rules overlap, preserve the current UI categorization but use a deduplicated underlying record set for aggregate totals.
+
+PART 5 — PRESERVE OTHER ACTION REQUIRED SOURCES
+
+Keep the existing Action Required entries:
+
+- Teacher Leave
+- Student Leave
+- Gallery Hub
+- E-Book Library
+
+Preserve their correct destinations and existing pending-action rules.
+
+Opening these destinations may clear the unread red dot after successful display, but must not clear the Action Required count.
+
+PART 6 — MINIMAL SEEN/UNSEEN STORAGE
+
+Implement the smallest safe browser-local seen-state mechanism without database changes.
+
+Requirements:
+
+- Scope by authenticated Admin identity.
+- Scope by School ID.
+- Scope by Academic Session ID for session-owned notification sources.
+- Keep Gallery and E-Book seen state school-wide.
+- Scope independently by submodule.
+- Use stable underlying record IDs, not just counts.
+- Do not mix notification state between Admin accounts or schools.
+- Handle missing or malformed browser storage safely.
+- Do not store complaint messages, leave details, student names, or other sensitive record content in browser storage.
+- Never mark a record seen merely because the parent dashboard was opened.
+- Mark only successfully loaded and actually displayed items as seen.
+- Do not mark records from an unrelated hidden tab as seen.
+- Avoid unbounded growth of stored seen IDs; prune safely without making existing pending items repeatedly appear unread.
+- Treat the initial state as unread for existing actionable items unless an existing reliable seen-state mechanism dictates otherwise.
+
+Browser-local seen state does not need to synchronize across devices.
+
+Do not create new database tables, columns, APIs, or server-side read markers.
+
+PART 7 — DATA REFRESH AND CORRECTNESS
+
+Reuse existing authorized notification queries wherever possible.
+
+Preserve the AN-2 dashboard refresh and error handling.
+
+Ensure:
+- School and Academic Session switching does not leak cached notification data or seen state.
+- New pending items become unread after the relevant query refreshes.
+- Failed queries do not show false zero counts.
+- Failed queries do not clear unread indicators.
+- No aggressive polling.
+- No duplicate fetches merely to calculate red dots.
+- No unnecessary full-page reloads.
+
+Use existing React Query invalidation and refresh patterns.
+
+Do not modify global query defaults.
+
+PART 8 — UI REQUIREMENTS
+
+Preserve the current Admin Dashboard design.
+
+Show:
+- Numeric badges for unresolved counts.
+- Small red dots for unseen actionable items.
+
+Where both are present, keep them visually distinct without overcrowding the interface.
+
+Ensure parent and submodule red dots remain consistent.
+
+Support desktop and mobile-width browser layouts, but do not work on the native Mobile application.
+
+Maintain accessible labels or descriptions so the meaning of unread versus pending is clear.
+
+PART 9 — FOCUSED REGRESSION TESTS
+
+Add side-effect-free tests covering:
+
+1. All seven actionable submodules.
+2. Parent unread-dot aggregation.
+3. Opening one submodule clears only its own unread state.
+4. Parent unread dot remains when another child has unseen items.
+5. Action Required count remains after viewing.
+6. A new pending item becomes unread after refresh.
+7. Existing unresolved items are not counted as newly unread after being seen.
+8. Complaint status normalization and terminal statuses.
+9. Complaint category breakdown and deduplicated aggregate.
+10. Direct navigation to each Complaint Hub tab.
+11. School, Admin, and Academic Session isolation.
+12. School-wide Gallery/E-Book behavior.
+13. Loading, API failure, empty states, and malformed browser storage.
+14. No marking as seen from parent-only navigation or hidden tabs.
+15. Existing permission checks.
+16. No change to approval or complaint business workflows.
+
+Run focused tests and the Web build.
+
+PART 10 — STRICT SAFETY RULES
+
+- Modify Development source only.
+- No Production changes.
+- No database or schema changes.
+- No database backfill.
+- No complaint, leave, gallery, or e-book record mutations.
+- No changes to approval decisions or status workflows.
+- No notification sending.
+- No backend restart.
+- No workflow restart.
+- No deployment or publishing.
+- No changes to financial calculations.
+- No changes to historical attendance.
+- No native Mobile application work.
+- No broad unrelated refactoring.
+
+If an existing API cannot safely supply stable item IDs or correct category ownership, report the specific blocker rather than inventing unsafe behavior.
+
+PART 11 — FINAL REPORT
+
+Provide:
+
+A. Files changed.
+
+B. Exact parent and submodule red-dot coverage.
+
+C. Complaint status/count correction.
+
+D. Action Required source-to-destination mapping.
+
+E. How click-to-dismiss works.
+
+F. How Admin, School, and Academic Session isolation is enforced.
+
+G. Browser-local storage limitations.
+
+H. Focused test results.
+
+I. Web build results.
+
+J. Remaining blockers or limitations.
+
+STOP after implementation and reporting.
+
+Do not restart or deploy.

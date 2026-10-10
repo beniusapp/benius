@@ -18,8 +18,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
+import { markAdminIdsSeen, useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
 
-interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; isArchiveMode?: boolean; }
+interface Props { schoolId: number; adminId: number; sessionId: number | null; unreadGallery: boolean; unreadEbooks: boolean; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; isArchiveMode?: boolean; }
 
 // ── Section colours keyed by variant ──────────────────────────────────────────
 const VARIANTS = {
@@ -227,7 +228,7 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 // ── Gallery Hub ────────────────────────────────────────────────────────────────
-function GalleryHub({ schoolId, isArchiveMode = false }: { schoolId: number; isArchiveMode?: boolean }) {
+function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { schoolId: number; adminId: number; sessionId: number | null; isArchiveMode?: boolean }) {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"gallery-images" | "gallery-approval">("gallery-images");
   const [showUpload, setShowUpload] = useState(false);
@@ -247,14 +248,14 @@ function GalleryHub({ schoolId, isArchiveMode = false }: { schoolId: number; isA
   const [isUploading, setIsUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { data: allItems = [], isLoading } = useQuery<GalleryItemWithTeacher[]>({
+  const { data: allItems = [], isLoading, isSuccess } = useQuery<GalleryItemWithTeacher[]>({
     queryKey: ["/api/admin/gallery", schoolId],
     queryFn: async () => {
       const r = await fetch(`/api/admin/gallery/${schoolId}`, { credentials: "include" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({ message: r.statusText }));
         console.error("[GalleryHub] API error", r.status, err);
-        return [];
+        throw new Error("Unable to load gallery submissions");
       }
       return r.json();
     },
@@ -264,6 +265,12 @@ function GalleryHub({ schoolId, isArchiveMode = false }: { schoolId: number; isA
   const approvedItems = allItems.filter(i => i.approved);
   const previewItem = previewIdx !== null ? approvedItems[previewIdx] ?? null : null;
   const pendingItems  = allItems.filter(i => !i.approved);
+  const galleryPendingIds = pendingItems.map(item => item.id);
+  const galleryUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds);
+  useEffect(() => {
+    if (activeTab === "gallery-approval" && isSuccess && !isLoading)
+      markAdminIdsSeen({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds, galleryPendingIds);
+  }, [activeTab, isSuccess, isLoading, adminId, schoolId, galleryPendingIds.join(",")]);
 
   const pendingGroups = useMemo(() => {
     const map = new Map<string, GalleryItemWithTeacher[]>();
@@ -417,6 +424,7 @@ function GalleryHub({ schoolId, isArchiveMode = false }: { schoolId: number; isA
               {tab === "gallery-images"
                 ? `🖼 Gallery Images (${approvedItems.length})`
                 : `⏳ Gallery Approval (${pendingItems.length})`}
+              {tab === "gallery-approval" && galleryUnreadIds.size > 0 && <span aria-label="Unread actionable items" title="Unread actionable items" className="ml-2 inline-block w-2 h-2 rounded-full bg-red-500" />}
             </button>
           ))}
         </div>
@@ -1140,10 +1148,11 @@ type ActiveSection = "gallery-hub" | "ebook" | null;
 
 // ── Landing tile card ──────────────────────────────────────────────────────────
 function ApprovalTile({
-  title, subtitle, icon: Icon, gradient, glow, badge, badgeColor, onClick,
+  title, subtitle, icon: Icon, gradient, glow, badge, badgeColor, unread = false, onClick,
 }: {
   title: string; subtitle: string; icon: React.ElementType;
-  gradient: string; glow: string; badge: number | null; badgeColor: string;
+  gradient: string; glow: string; badge: number | null | undefined; badgeColor: string;
+  unread?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -1173,6 +1182,7 @@ function ApprovalTile({
         >
           <Icon className="w-5 h-5 text-white" />
         </div>
+        {unread && <span aria-label="Unread actionable items" title="Unread actionable items" className="w-2 h-2 rounded-full bg-red-500" />}
         {badge !== null && badge > 0 && (
           <span
             className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0"
@@ -1233,7 +1243,7 @@ function SectionHeader({
 // ── Main component ─────────────────────────────────────────────────────────────
 const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Literature", "Technology", "Arts", "Reference", "Other"];
 
-export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection, allowedSubs, isArchiveMode = false }: Props) {
+export default function ApprovalCenter({ schoolId, adminId, sessionId, initialSection, onNavigateSection, allowedSubs, isArchiveMode = false }: Props) {
   const { toast } = useToast();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
   const canGallery = !allowedSubs || allowedSubs.includes("gallery-hub");
@@ -1263,11 +1273,12 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     enabled: !!schoolId && showHistory && (canGallery || canEbooks),
   });
 
-  const { data: pendingEbooks = [], isLoading: ebooksLoading } = useQuery<any[]>({
+  const { data: pendingEbooks = [], isLoading: ebooksLoading, isSuccess: ebooksSuccess } = useQuery<any[]>({
     queryKey: ["/api/library/books", schoolId, "pending"],
     queryFn: async () => {
       const r = await fetch(`/api/library/books/${schoolId}/pending`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("Unable to load pending e-books");
+      return r.json();
     },
     enabled: !!schoolId && canEbooks,
   });
@@ -1331,15 +1342,24 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
 
   const isPending = ebookVerifyMutation.isPending;
 
-  const { data: allGalleryForCount = [] } = useQuery<any[]>({
+  const { data: allGalleryForCount = [], isSuccess: galleryCountSuccess } = useQuery<any[]>({
     queryKey: ["/api/gallery", schoolId, "all"],
     queryFn: async () => {
       const r = await fetch(`/api/gallery/${schoolId}?all=true`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("Unable to load gallery approvals");
+      return r.json();
     },
     enabled: !!schoolId && canGallery,
   });
-  const galleryPendingCount = allGalleryForCount.filter((g: any) => !g.approved).length;
+  const galleryPendingCount = galleryCountSuccess ? allGalleryForCount.filter((g: any) => !g.approved).length : undefined;
+  const galleryPendingIds = allGalleryForCount.filter((g: any) => !g.approved).map((g: any) => g.id);
+  const ebookPendingIds = pendingEbooks.map((b: any) => b.id);
+  const galleryUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds);
+  const ebookUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "ebooks" }, ebookPendingIds);
+  useEffect(() => {
+    if (activeSection === "ebook" && ebookTab === "verification" && ebooksSuccess && !ebooksLoading)
+      markAdminIdsSeen({ adminId, schoolId, sessionId: null, source: "ebooks" }, ebookPendingIds, ebookPendingIds);
+  }, [activeSection, ebookTab, ebooksSuccess, ebooksLoading, adminId, schoolId, ebookPendingIds.join(",")]);
 
   const Spinner = () => (
     <div className="flex justify-center py-8">
@@ -1455,6 +1475,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             gradient="linear-gradient(135deg, #a855f7, #ec4899)"
             glow="rgba(168,85,247,0.18)"
             badge={galleryPendingCount}
+            unread={galleryUnreadIds.size > 0}
             badgeColor="linear-gradient(135deg,#a855f7,#ec4899)"
             onClick={() => { setActiveSection("gallery-hub"); onNavigateSection?.("gallery-hub"); }}
           />
@@ -1467,6 +1488,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             gradient="linear-gradient(135deg, #f59e0b, #f97316)"
             glow="rgba(245,158,11,0.18)"
             badge={pendingEbooks.length}
+            unread={ebookUnreadIds.size > 0}
             badgeColor="linear-gradient(135deg,#f59e0b,#f97316)"
             onClick={() => { setActiveSection("ebook"); onNavigateSection?.("ebook"); }}
           />
@@ -1492,7 +1514,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
             badge={galleryPendingCount}
           />
-          <GalleryHub schoolId={schoolId} isArchiveMode={isArchiveMode} />
+          <GalleryHub schoolId={schoolId} adminId={adminId} sessionId={sessionId} isArchiveMode={isArchiveMode} />
         </>
       )}
 
@@ -1527,6 +1549,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                 }}
               >
                 {t.icon}{t.label}
+                {t.key === "verification" && ebookUnreadIds.size > 0 && <span aria-label="Unread actionable items" title="Unread actionable items" className="w-2 h-2 rounded-full bg-red-500" />}
                 {"badge" in t && t.badge > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
                     style={{ background: "linear-gradient(135deg,#f59e0b,#f97316)" }}>

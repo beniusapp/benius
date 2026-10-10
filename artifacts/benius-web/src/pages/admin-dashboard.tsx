@@ -44,6 +44,7 @@ import {
   shouldShowAdminActionNotifications,
   summarizeAdminNotifications,
 } from "@/lib/admin-dashboard-notifications";
+import { useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -298,9 +299,10 @@ function StatRing({ value, max, color, size = 52, icon }: {
   );
 }
 
-function TileCard({ tile, badge, onClick }: {
+function TileCard({ tile, badge, unread = false, onClick }: {
   tile: TileConfig;
   badge?: number;
+  unread?: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -332,6 +334,7 @@ function TileCard({ tile, badge, onClick }: {
       whileHover={{ scale: 1.04 }}
       transition={{ type: "spring", stiffness: 280, damping: 26 }}
       data-testid={`tile-${tile.id}`}
+      aria-label={`${tile.label}${unread ? ", unread actionable items" : ""}${badge ? `, ${badge} pending` : ""}`}
       className="relative text-left focus:outline-none flex flex-col"
       style={{
         rotateX,
@@ -378,7 +381,10 @@ function TileCard({ tile, badge, onClick }: {
         {tile.emoji}
       </div>
 
-      <h3 className="font-bold text-white text-sm leading-tight mb-1.5">{tile.label}</h3>
+      <h3 className="font-bold text-white text-sm leading-tight mb-1.5 flex items-center gap-2">
+        {tile.label}
+        {unread && <span aria-label="Unread actionable items" title="Unread actionable items" className="inline-block w-2 h-2 rounded-full bg-red-500" />}
+      </h3>
       <p className="text-white/40 text-xs leading-relaxed flex-1">{tile.desc}</p>
 
       <div
@@ -1772,9 +1778,9 @@ export default function AdminDashboard() {
   );
   const notificationQueryOptions = ADMIN_NOTIFICATION_QUERY_OPTIONS;
   const teacherLeavesQuery = useQuery<
-    { status?: string }[],
+    { id: number; status?: string }[],
     Error,
-    { status?: string }[],
+    { id: number; status?: string }[],
     typeof notificationQueryKeys.teacherLeaves
   >({
     queryKey: notificationQueryKeys.teacherLeaves,
@@ -1793,9 +1799,9 @@ export default function AdminDashboard() {
     ...notificationQueryOptions,
   });
   const studentLeavesQuery = useQuery<
-    { status?: string }[],
+    { id: number; status?: string }[],
     Error,
-    { status?: string }[],
+    { id: number; status?: string }[],
     typeof notificationQueryKeys.studentLeaves
   >({
     queryKey: notificationQueryKeys.studentLeaves,
@@ -1814,9 +1820,9 @@ export default function AdminDashboard() {
     ...notificationQueryOptions,
   });
   const galleryQuery = useQuery<
-    { approved?: boolean }[],
+    { id: number; approved?: boolean }[],
     Error,
-    { approved?: boolean }[],
+    { id: number; approved?: boolean }[],
     typeof notificationQueryKeys.gallery
   >({
     queryKey: notificationQueryKeys.gallery,
@@ -1831,9 +1837,9 @@ export default function AdminDashboard() {
     ...notificationQueryOptions,
   });
   const ebooksQuery = useQuery<
-    { verificationStatus?: string }[],
+    { id: number; verificationStatus?: string }[],
     Error,
-    { verificationStatus?: string }[],
+    { id: number; verificationStatus?: string }[],
     typeof notificationQueryKeys.ebooks
   >({
     queryKey: notificationQueryKeys.ebooks,
@@ -1848,9 +1854,9 @@ export default function AdminDashboard() {
     ...notificationQueryOptions,
   });
   const complaintsQuery = useQuery<
-    { status?: string }[],
+    { id: number; status?: string; complaintType?: string; escalatedToPrincipal?: boolean; notifyAdmin?: boolean }[],
     Error,
-    { status?: string }[],
+    { id: number; status?: string; complaintType?: string; escalatedToPrincipal?: boolean; notifyAdmin?: boolean }[],
     typeof notificationQueryKeys.complaints
   >({
     queryKey: notificationQueryKeys.complaints,
@@ -1876,6 +1882,26 @@ export default function AdminDashboard() {
     ebooks: ebooksQuery,
     complaints: complaintsQuery,
   });
+  const notifyAdminId = me?.id ?? 0;
+  const notifySchoolId = me?.schoolId ?? 0;
+  const notifySessionId = selectedViewSession?.id ?? null;
+  const teacherPendingIds = (teacherLeavesQuery.data ?? []).filter(item => item.status?.toLowerCase() === "pending").map(item => item.id);
+  const studentPendingIds = (studentLeavesQuery.data ?? []).filter(item => item.status?.toLowerCase() === "forwarded_to_admin").map(item => item.id);
+  const galleryPendingIds = (galleryQuery.data ?? []).filter(item => item.approved === false).map(item => item.id);
+  const ebookPendingIds = (ebooksQuery.data ?? []).filter(item => item.verificationStatus?.toLowerCase() === "pending").map(item => item.id);
+  const complaintIds = notificationSummary.categorizedComplaints;
+  const unreadTeacher = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "teacher-leave" }, teacherPendingIds);
+  const unreadStudent = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "student-leave" }, studentPendingIds);
+  const unreadGallery = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: null, source: "gallery" }, galleryPendingIds);
+  const unreadEbooks = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: null, source: "ebooks" }, ebookPendingIds);
+  const unreadPrivate = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "private-complaints" }, complaintIds["private-complaints"].map(item => item.id));
+  const unreadGrievances = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "student-grievances" }, complaintIds["student-grievances"].map(item => item.id));
+  const unreadEscalated = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "escalated-complaints" }, complaintIds["escalated-complaints"].map(item => item.id));
+  const parentUnread = {
+    "leave-requests": unreadTeacher.size > 0 || unreadStudent.size > 0,
+    "approval-center": unreadGallery.size > 0 || unreadEbooks.size > 0,
+    "complaint-hub": unreadPrivate.size > 0 || unreadGrievances.size > 0 || unreadEscalated.size > 0,
+  };
   const pendingNotificationCount = notificationSummary.total;
   const actionCountAnimated = useCountUp(pendingNotificationCount ?? 0);
   const notificationQueries = [
@@ -2038,14 +2064,14 @@ export default function AdminDashboard() {
       case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} allowedSubs={getSubsFor("faculty-mapping")} isArchiveMode={isArchiveMode} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} allowedSubs={getSubsFor("teacher-registry")} />;
       case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} allowedSubs={getSubsFor("non-teaching-staff")} />;
-      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} isArchiveMode={isArchiveMode} />;
-      case "leave-requests":    return <LeaveRequests schoolId={me.schoolId} initialSection={leaveReqSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/leave-requests/${sec}`); else setLocation("/admin-dashboard/leave-requests"); }} allowedSubs={getSubsFor("leave-requests")} />;
+      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} adminId={me.id} sessionId={notifySessionId} unreadGallery={unreadGallery.size > 0} unreadEbooks={unreadEbooks.size > 0} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} isArchiveMode={isArchiveMode} />;
+      case "leave-requests":    return <LeaveRequests schoolId={me.schoolId} adminId={me.id} sessionId={notifySessionId} unreadTeacher={unreadTeacher.size > 0} unreadStudent={unreadStudent.size > 0} initialSection={leaveReqSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/leave-requests/${sec}`); else setLocation("/admin-dashboard/leave-requests"); }} allowedSubs={getSubsFor("leave-requests")} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} viewSessionId={selectedViewSession?.id ?? null} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} viewSessionId={selectedViewSession?.id} onViewStudent={() => goToModule("student-registry")} />;
       case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} initialTab={analyticsSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/analytics/${t}`)} allowedSubs={getSubsFor("analytics")} />;
       case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffExamControllerContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffExamControllerContext?.sections ?? []) : meta.sections} examTypes={me.role === "support_staff" ? (supportStaffExamControllerContext?.exam_types ?? []) : meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
-      case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
+      case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} adminId={me.id} sessionId={notifySessionId} unreadPrivate={unreadPrivate.size > 0} unreadGrievances={unreadGrievances.size > 0} unreadEscalated={unreadEscalated.size > 0} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
       case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffNoticeboardContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffNoticeboardContext?.sections ?? []) : meta.sections} adminUserId={me.id} allowedSubs={getSubsFor("noticeboard")} />;
        case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffTimetableContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffTimetableContext?.sections ?? []) : meta.sections} subjects={me.role === "support_staff" ? (supportStaffTimetableContext?.subjects ?? []) : meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} allowedSubs={getSubsFor("timetable")} />;
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} allowedSubs={getSubsFor("id-card-gen")} />;
@@ -2574,6 +2600,7 @@ export default function AdminDashboard() {
                       {groupTiles.map(tile => {
                         const isActive = activeModule === tile.id;
                         const badge = (tile.badgeKey && me?.role !== "support_staff") ? BADGES[tile.badgeKey] : undefined;
+                        const unread = me?.role !== "support_staff" && !!parentUnread[tile.id as keyof typeof parentUnread];
                         return (
                           <button
                             key={tile.id}
@@ -2605,6 +2632,7 @@ export default function AdminDashboard() {
                               style={{ color: isActive ? tile.accentColor : "rgba(255,255,255,0.30)" }}
                             />
                             <span className="truncate text-xs font-medium">{tile.label}</span>
+                            {unread && <span aria-label="Unread actionable items" title="Unread actionable items" className={`${badge !== undefined && badge > 0 ? "" : "ml-auto "}w-2 h-2 rounded-full bg-red-500`} />}
                             {badge !== undefined && badge > 0 && (
                               <span className="ml-auto flex-shrink-0 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
                                 {badge > 9 ? "9+" : badge}
@@ -2674,6 +2702,7 @@ export default function AdminDashboard() {
                             key={tile.id}
                             tile={tile}
                             badge={(tile.badgeKey && me?.role !== "support_staff") ? BADGES[tile.badgeKey] : undefined}
+                            unread={me?.role !== "support_staff" && !!parentUnread[tile.id as keyof typeof parentUnread]}
                             onClick={() => goToModule(tile.id)}
                           />
                         ))}

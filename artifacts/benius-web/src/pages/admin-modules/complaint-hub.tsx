@@ -7,10 +7,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import { isUnresolvedComplaintStatus } from "@/lib/admin-dashboard-notifications";
+import { markAdminIdsSeen, useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
 
-interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[]; }
+interface Props {
+  schoolId: number; adminId: number; sessionId: number | null;
+  unreadPrivate: boolean; unreadGrievances: boolean; unreadEscalated: boolean;
+  initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[];
+}
 
 interface AdminComplaint {
   id: number;
@@ -420,7 +426,7 @@ const TAB_CONFIG: {
 ];
 
 // ── Main Component ─────────────────────────────────────────────────────────────
-export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allowedSubs }: Props) {
+export default function ComplaintHub({ schoolId, adminId, sessionId, initialTab, onNavigateTab, allowedSubs }: Props) {
   const visibleTabs = allowedSubs ? TAB_CONFIG.filter(t => allowedSubs.includes(t.key)) : TAB_CONFIG;
   const defaultTab = (visibleTabs[0]?.key ?? "private") as TabKey;
   const [activeTab, setActiveTab] = useState<TabKey>(
@@ -434,11 +440,12 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allo
     private: "all", grievances: "all", escalated: "all",
   });
 
-  const { data: all = [], isLoading } = useQuery<AdminComplaint[]>({
-    queryKey: ["/api/complaints/school", schoolId],
+  const { data: all = [], isLoading, isSuccess } = useQuery<AdminComplaint[]>({
+    queryKey: ["/api/complaints/school", schoolId, sessionId],
     queryFn: async () => {
-      const r = await sessionFetch(`/api/complaints/school/${schoolId}`);
-      return r.ok ? r.json() : [];
+      const r = await sessionFetchForViewSession(`/api/complaints/school/${schoolId}`, sessionId);
+      if (!r.ok) throw new Error("Unable to load complaints");
+      return r.json();
     },
     enabled: !!schoolId,
   });
@@ -454,14 +461,28 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allo
     private: privateTeacher.length, grievances: studentGrievances.length, escalated: escalated.length,
   };
   const activeByKey: Record<TabKey, number> = {
-    private: privateTeacher.filter(c => c.status !== "Resolved").length,
-    grievances: studentGrievances.filter(c => c.status !== "Resolved").length,
-    escalated: escalated.filter(c => c.status !== "Resolved").length,
+    private: privateTeacher.filter(c => isUnresolvedComplaintStatus(c.status)).length,
+    grievances: studentGrievances.filter(c => isUnresolvedComplaintStatus(c.status)).length,
+    escalated: escalated.filter(c => isUnresolvedComplaintStatus(c.status)).length,
   };
   const itemsByKey: Record<TabKey, AdminComplaint[]> = {
     private: privateTeacher, grievances: studentGrievances, escalated,
   };
-  const totalActive = activeByKey.private + activeByKey.grievances + activeByKey.escalated;
+  const totalActive = new Set([...privateTeacher, ...studentGrievances, ...escalated]
+    .filter(c => isUnresolvedComplaintStatus(c.status)).map(c => c.id)).size;
+  const pendingIdsByTab: Record<TabKey, number[]> = {
+    private: privateTeacher.filter(c => isUnresolvedComplaintStatus(c.status)).map(c => c.id),
+    grievances: studentGrievances.filter(c => isUnresolvedComplaintStatus(c.status)).map(c => c.id),
+    escalated: escalated.filter(c => isUnresolvedComplaintStatus(c.status)).map(c => c.id),
+  };
+  const privateUnread = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "private-complaints" }, pendingIdsByTab.private);
+  const grievancesUnread = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "student-grievances" }, pendingIdsByTab.grievances);
+  const escalatedUnread = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "escalated-complaints" }, pendingIdsByTab.escalated);
+  useEffect(() => {
+    if (!isSuccess || isLoading || !visibleTabs.some(tab => tab.key === activeTab)) return;
+    const source = activeTab === "private" ? "private-complaints" : activeTab === "grievances" ? "student-grievances" : "escalated-complaints";
+    markAdminIdsSeen({ adminId, schoolId, sessionId, source }, pendingIdsByTab[activeTab], pendingIdsByTab[activeTab]);
+  }, [isSuccess, isLoading, activeTab, adminId, schoolId, sessionId, all]);
   const activeConfig = TAB_CONFIG.find(t => t.key === activeTab)!;
 
   if (isLoading) {
@@ -500,6 +521,7 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allo
         {visibleTabs.map(tab => {
           const isActive = activeTab === tab.key;
           const Icon = tab.icon;
+          const hasUnread = tab.key === "private" ? privateUnread.size > 0 : tab.key === "grievances" ? grievancesUnread.size > 0 : escalatedUnread.size > 0;
           return (
             <button key={tab.key} role="tab" aria-selected={isActive} onClick={() => { setActiveTab(tab.key); onNavigateTab?.(tab.key); }} data-testid={`tab-${tab.key}`}
               className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold transition-all duration-200 ${
@@ -507,9 +529,10 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allo
               }`}>
               <Icon className="w-3.5 h-3.5 flex-shrink-0" />
               <span className="hidden sm:inline truncate">{tab.label}</span>
-              {countByKey[tab.key] > 0 && (
+              {hasUnread && <span aria-label="Unread actionable items" title="Unread actionable items" className="w-2 h-2 rounded-full bg-red-500 shrink-0" />}
+              {activeByKey[tab.key] > 0 && (
                 <span className={`flex-shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-full ${isActive ? tab.badgeBg : "bg-white/10 text-white/50"}`}>
-                  {countByKey[tab.key]}
+                  {activeByKey[tab.key]}
                 </span>
               )}
             </button>

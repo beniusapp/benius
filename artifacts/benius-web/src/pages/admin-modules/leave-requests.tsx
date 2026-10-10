@@ -11,11 +11,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import { markAdminIdsSeen, useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
 
 interface Props {
   schoolId: number;
+  adminId: number;
+  sessionId: number | null;
+  unreadTeacher: boolean;
+  unreadStudent: boolean;
   initialSection?: string | null;
   onNavigateSection?: (sec: string | null) => void;
   allowedSubs?: string[];
@@ -118,9 +123,10 @@ function ActionButtons({ disabled, onApprove, onReject, approveLabel = "Approve"
 }
 
 // ── Landing tile ───────────────────────────────────────────────────────────────
-function LeaveTile({ title, subtitle, icon: Icon, gradient, glow, badge, badgeColor, onClick, fullWidth }: {
+function LeaveTile({ title, subtitle, icon: Icon, gradient, glow, badge, badgeColor, unread = false, onClick, fullWidth }: {
   title: string; subtitle: string; icon: React.ElementType;
   gradient: string; glow: string; badge: number | null; badgeColor: string;
+  unread?: boolean;
   onClick: () => void; fullWidth?: boolean;
 }) {
   return (
@@ -135,10 +141,10 @@ function LeaveTile({ title, subtitle, icon: Icon, gradient, glow, badge, badgeCo
           style={{ background: gradient, boxShadow: `0 0 20px ${glow}` }}>
           <Icon className="w-5 h-5 text-white" />
         </div>
-        {badge !== null && badge > 0 && (
-          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0"
-            style={{ background: badgeColor }}>{badge} pending</span>
-        )}
+        <span className="flex items-center gap-2">
+          {unread && <span aria-label="Unread actionable items" title="Unread actionable items" className="w-2 h-2 rounded-full bg-red-500" />}
+          {badge !== null && badge > 0 && <span className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0" style={{ background: badgeColor }}>{badge} pending</span>}
+        </span>
       </div>
       <div className="flex-1">
         <p className="font-bold text-white text-base leading-tight">{title}</p>
@@ -210,7 +216,7 @@ function Spinner() {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function LeaveRequests({ schoolId, initialSection, onNavigateSection, allowedSubs }: Props) {
+export default function LeaveRequests({ schoolId, adminId, sessionId, initialSection, onNavigateSection, allowedSubs }: Props) {
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
@@ -224,20 +230,22 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
   const canHistory      = !allowedSubs || allowedSubs.includes("leave-history");
 
   // ── Queries ──────────────────────────────────────────────────────────────────
-  const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
-    queryKey: ["/api/leave/school", schoolId],
+  const { data: leaveRequests = [], isLoading: leavesLoading, isSuccess: leavesSuccess } = useQuery<any[]>({
+    queryKey: ["/api/leave/school", schoolId, sessionId],
     queryFn: async () => {
-      const r = await sessionFetch(`/api/leave/school/${schoolId}`);
-      return r.ok ? r.json() : [];
+      const r = await sessionFetchForViewSession(`/api/leave/school/${schoolId}`, sessionId);
+      if (!r.ok) throw new Error("Unable to load teacher leave requests");
+      return r.json();
     },
     enabled: !!schoolId && canTeacherLeave,
   });
 
-  const { data: studentLeaves = [], isLoading: sleavesLoading } = useQuery<any[]>({
-    queryKey: ["/api/student-leaves/school", schoolId],
+  const { data: studentLeaves = [], isLoading: sleavesLoading, isSuccess: studentLeavesSuccess } = useQuery<any[]>({
+    queryKey: ["/api/student-leaves/school", schoolId, sessionId],
     queryFn: async () => {
-      const r = await sessionFetch(`/api/student-leaves/school/${schoolId}`);
-      return r.ok ? r.json() : [];
+      const r = await sessionFetchForViewSession(`/api/student-leaves/school/${schoolId}`, sessionId);
+      if (!r.ok) throw new Error("Unable to load student leave requests");
+      return r.json();
     },
     enabled: !!schoolId && canStudentLeave,
   });
@@ -276,6 +284,16 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
 
   const pendingLeaves          = leaveRequests.filter((l: any) => l.status === "pending");
   const forwardedStudentLeaves = studentLeaves;
+  const teacherPendingIds = pendingLeaves.map((item: any) => item.id);
+  const studentPendingIds = forwardedStudentLeaves.map((item: any) => item.id);
+  const teacherUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "teacher-leave" }, teacherPendingIds);
+  const studentUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "student-leave" }, studentPendingIds);
+  useEffect(() => {
+    if (activeSection === "teacher-leave" && canTeacherLeave && leavesSuccess)
+      markAdminIdsSeen({ adminId, schoolId, sessionId, source: "teacher-leave" }, teacherPendingIds, teacherPendingIds);
+    if (activeSection === "student-leave" && canStudentLeave && studentLeavesSuccess)
+      markAdminIdsSeen({ adminId, schoolId, sessionId, source: "student-leave" }, studentPendingIds, studentPendingIds);
+  }, [activeSection, adminId, schoolId, sessionId, leavesSuccess, studentLeavesSuccess, teacherPendingIds.join(","), studentPendingIds.join(",")]);
   const isPending              = leaveStatusMutation.isPending || studentLeaveApproveMutation.isPending;
 
   // ── Student Leave Detail Modal ────────────────────────────────────────────────
@@ -405,6 +423,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
               gradient="linear-gradient(135deg, #0ea5e9, #06b6d4)"
               glow="rgba(14,165,233,0.18)"
               badge={pendingLeaves.length}
+              unread={teacherUnreadIds.size > 0}
               badgeColor="linear-gradient(135deg,#0ea5e9,#06b6d4)"
               onClick={() => { setActiveSection("teacher-leave"); onNavigateSection?.("teacher-leave"); }}
             />
@@ -417,6 +436,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
               gradient="linear-gradient(135deg, #818cf8, #6366f1)"
               glow="rgba(99,102,241,0.18)"
               badge={forwardedStudentLeaves.length}
+              unread={studentUnreadIds.size > 0}
               badgeColor="linear-gradient(135deg,#818cf8,#6366f1)"
               onClick={() => { setActiveSection("student-leave"); onNavigateSection?.("student-leave"); }}
             />
