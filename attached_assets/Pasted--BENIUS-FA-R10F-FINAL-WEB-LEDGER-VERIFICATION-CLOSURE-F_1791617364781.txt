@@ -1,0 +1,153 @@
+# BENIUS — FA-R10F
+## FINAL WEB LEDGER VERIFICATION & CLOSURE
+
+### FINAL STAGE — STRICTLY READ-ONLY
+
+We have completed FA-R9 through FA-R10E for the BENIUS Principal Portal → Fees & Payments, focusing on Financial Analytics and Web Ledger accuracy.
+
+The owner wants to FINISH this work, not continue endless audits.
+
+Your objective is to perform one focused final verification and provide a clear closure report.
+
+Do not expand the scope.
+
+## 1. Verify only the FA-R10D corrections
+
+Confirm that:
+
+1. Web Ledger payment-to-invoice joins require matching School ID and Student ID.
+2. Invalid links cannot expose another school's or student's invoice metadata.
+3. Legacy payments with NULL session IDs can appear in the selected Academic Session when linked to a verified same-school, same-student invoice.
+4. Normal payments continue following existing behavior.
+5. Conflicting non-NULL payment/invoice sessions remain unchanged.
+6. Financial formulas and stored records remain unchanged.
+
+Review the existing implementation and tests.
+
+Do not rewrite working code.
+
+## 2. Run existing focused tests
+
+Run the FA-R10D Ledger query tests.
+
+Report:
+
+- Tests executed.
+- Tests passed.
+- Tests failed.
+- What those tests actually verify.
+- What they do not verify.
+
+If a suitable existing SQL test mechanism is available without database setup or real financial access, use it for one focused complete-query verification.
+
+Otherwise, do not install infrastructure or create databases. State that SQL execution remains unverified.
+
+Do not repeat previous audits.
+
+## 3. Check the relevant TypeScript error
+
+Investigate only the diagnostic near:
+
+`fees-routes.ts:1455`
+
+Determine whether it is related to the FA-R10D implementation.
+
+If a reliable earlier baseline exists, compare against it.
+
+Do not fix it.
+
+Do not investigate or repair the other package-wide TypeScript errors.
+
+## 4. Confirm financial safety
+
+Verify that FA-R10D did not change:
+
+- Payment or invoice amounts.
+- Refund records.
+- Financial Analytics formulas.
+- Gross or Net Collected.
+- Collection Efficiency.
+- Outstanding calculations.
+- Academic Session records.
+- Fee Structures.
+- Ledger CSV/PDF calculations.
+- Payment/refund processing.
+
+No real database access is authorized.
+
+## 5. Explicitly exclude other topics
+
+Do not investigate or modify:
+
+- Mobile application or Mobile APIs.
+- Conflicting-session reconciliation beyond confirming it remains unchanged.
+- Student payment-attempt history.
+- Other Ledger/export issues.
+- Refund calculation differences.
+- School-Wide Audit Log.
+- Fee Structure historical presentation.
+- Other Fees & Payments modules.
+
+These are separate future decisions.
+
+## 6. Final closure report
+
+Provide a SHORT report with these headings:
+
+### A. Final verdict
+
+Choose:
+
+- VERIFIED AT SOURCE/TEST LEVEL — SQL EXECUTION PENDING
+- FULLY VERIFIED — if complete-query execution actually occurred and passed
+- NEEDS CORRECTION — if a specific regression is confirmed
+
+Do not claim full verification based only on SQL fragments.
+
+### B. Two approved fixes
+
+State whether each is correctly implemented.
+
+### C. Test results
+
+Show pass/fail counts and evidence type.
+
+### D. TypeScript finding
+
+State whether the relevant diagnostic is connected to FA-R10D, unrelated, or undetermined.
+
+### E. Financial preservation
+
+Confirm no financial formulas or stored data were changed.
+
+### F. Remaining limitations
+
+List only material limitations, without opening new audit tasks.
+
+### G. Closure recommendation
+
+State whether FA-R10D can be closed at source/test level with disclosed limitations.
+
+## 7. Strict safety restrictions
+
+- No source changes.
+- No permanent test changes.
+- No financial database access.
+- No database mutations.
+- No migrations.
+- No startup backfills.
+- No deployments.
+- No workflow restarts.
+- No Mobile work.
+- No financial formula changes.
+- No additional implementation.
+
+## 8. Mandatory stop
+
+After the short final report, STOP.
+
+Do not propose new stages automatically.
+
+Do not create additional task cards.
+
+Wait for owner instructions.
