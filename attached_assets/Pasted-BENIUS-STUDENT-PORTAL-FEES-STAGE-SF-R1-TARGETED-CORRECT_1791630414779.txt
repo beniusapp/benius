@@ -1,0 +1,57 @@
+BENIUS — STUDENT PORTAL → FEES
+
+STAGE SF-R1: TARGETED CORRECTION PLAN (READ-ONLY)
+
+Inspect the existing Student Portal → Fees implementation and prepare the smallest safe correction plan.
+
+**1. Academic Session**
+- Ensure all Student Fees APIs use the selected Academic Session ID.
+- Verify that switching sessions displays only the selected session's fees, payments, and receipts.
+- Identify endpoints that allow missing session IDs or mix records between sessions.
+
+**2. Student ID + Enrollment ID + Academic Session ID**
+- Verify the authenticated Student ID and School ID are used.
+- Verify historical enrollment is resolved for the selected Academic Session.
+- Older sessions must use historical Class, Section, and Roll Number in fee documents.
+- Do not change Student Portal → Profile, which intentionally shows current information.
+
+**3. Outstanding Fees and Refunds**
+- Identify why refunded paid invoices with positive outstanding balances are missing from Outstanding.
+- Plan to display those invoices correctly without modifying stored payment statuses, financial formulas, or refund history.
+- Do not automatically enable online payment for these invoices.
+
+**4. Late Fees**
+- Compare the fee-card calculations with the summary and arrears calculations.
+- Identify any inconsistencies.
+- Recommend the smallest correction without changing existing financial formulas.
+
+**5. PDF, Invoice, and Receipt**
+- Inspect invoice HTML, receipt HTML, and payment-attempt statement PDF.
+- Verify correct School ID, Student ID, Academic Session ID, historical Enrollment ID, Class, Section, and Roll Number wherever applicable.
+- Verify invoice amounts, payment details, and IST dates.
+- Confirm documents cannot expose another student's or school's records.
+
+**6. Tests**
+- Identify the minimum focused tests needed for session switching, historical enrollment, outstanding balances, documents, and tenant isolation.
+- Use mocks for payment/provider paths; do not execute tests yet.
+
+STRICT RULES:
+- READ-ONLY PLANNING ONLY.
+- Do not modify code, database, or existing records.
+- Do not run tests.
+- Do not create invoices or payments.
+- Do not modify refund processing or financial formulas.
+- Do not restart, deploy, or publish.
+- Do not touch unrelated modules or Mobile.
+
+REPORT:
+A. Confirmed problems with file and line references.
+B. Exact files requiring changes.
+C. Smallest recommended fixes.
+D. Expected behavior after correction.
+E. Required regression tests.
+F. Any unresolved risks or decisions.
+
+Keep the report concise and practical.
+
+DO NOT IMPLEMENT ANYTHING. Wait for approval.
