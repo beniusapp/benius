@@ -22,6 +22,7 @@ import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
 import { rejectBearerOutsideMobileAuth, shouldLogJsonResponseBody } from "./mobile-auth-policy";
 import { ensureMobileAuthSchema } from "./mobile-auth-schema";
 import { runStartupMaintenance } from "./startup-maintenance-safety";
+import { studentComplaintReadReceiptsEnabled } from "./student-complaint-read-receipts";
 
 const app = express();
 const httpServer = createServer(app);
@@ -1408,7 +1409,9 @@ app.use((req, res, next) => {
     );
     throw error;
   }
-  await assertNoSchemaDrift(pool);
+  await assertNoSchemaDrift(pool, {
+    studentComplaintReadReceiptsEnabled: studentComplaintReadReceiptsEnabled(),
+  });
 
   await registerRoutes(httpServer, app);
 

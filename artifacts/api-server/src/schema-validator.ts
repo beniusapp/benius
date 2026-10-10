@@ -43,6 +43,15 @@ interface ExpectedColumn {
   column: string;
 }
 
+export interface SchemaValidationOptions {
+  /**
+   * Receipts are an optional Development feature until its migration and
+   * activation flags are both in place. Default to requiring the schema so
+   * callers that do not explicitly supply feature state fail closed.
+   */
+  studentComplaintReadReceiptsEnabled?: boolean;
+}
+
 /**
  * Build a flat list of { table, column } from every pgTable in shared/schema.ts.
  *
@@ -98,8 +107,14 @@ async function fetchActualColumns(pool: Pool): Promise<Set<string>> {
  */
 export async function validateSchemaColumns(
   pool: Pool,
+  options: SchemaValidationOptions = {},
 ): Promise<ExpectedColumn[]> {
-  const expected = buildExpectedColumns();
+  const requireStudentComplaintReadReceipts =
+    options.studentComplaintReadReceiptsEnabled ?? true;
+  const expected = buildExpectedColumns().filter(({ table }) =>
+    requireStudentComplaintReadReceipts ||
+    table !== "student_complaint_read_receipts"
+  );
   const actual = await fetchActualColumns(pool);
 
   const missing = expected.filter(
@@ -120,8 +135,11 @@ export async function validateSchemaColumns(
  *    start, blocking the deployment health check so Razorpay (or any caller)
  *    keeps retrying against the old healthy revision.
  */
-export async function assertNoSchemaDrift(pool: Pool): Promise<void> {
-  const missing = await validateSchemaColumns(pool);
+export async function assertNoSchemaDrift(
+  pool: Pool,
+  options: SchemaValidationOptions = {},
+): Promise<void> {
+  const missing = await validateSchemaColumns(pool, options);
 
   if (missing.length === 0) {
     console.log("[schema-validator] ✓ All schema columns present in DB.");
