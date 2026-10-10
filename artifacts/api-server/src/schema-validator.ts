@@ -50,7 +50,7 @@ export interface SchemaValidationOptions {
    * callers that do not explicitly supply feature state fail closed.
    */
   studentComplaintReadReceiptsEnabled?: boolean;
-  /** Reply-aware cursor is optional until its separate migration is applied and enabled. */
+  /** Reply notification events are optional until their migration is applied and enabled. */
   studentComplaintReplyAwareEnabled?: boolean;
 }
 
@@ -119,11 +119,7 @@ export async function validateSchemaColumns(
     if (table === "student_complaint_read_receipts" && !requireStudentComplaintReadReceipts) {
       return false;
     }
-    if (
-      table === "student_complaint_read_receipts"
-      && column === "last_read_note_id"
-      && !requireStudentComplaintReplyCursor
-    ) {
+    if (table === "student_complaint_notification_events" && !requireStudentComplaintReplyCursor) {
       return false;
     }
     return true;

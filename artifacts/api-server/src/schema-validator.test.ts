@@ -10,7 +10,17 @@ const expectedReceiptColumns = [
   "complaint_id",
   "read_at",
 ];
-const replyCursorColumn = "last_read_note_id";
+const replyActivityTable = "student_complaint_notification_events";
+const expectedReplyActivityColumns = [
+  "id",
+  "school_id",
+  "student_id",
+  "session_id",
+  "complaint_id",
+  "note_id",
+  "created_at",
+  "read_at",
+];
 
 function createEmptySchemaPool() {
   return {
@@ -41,22 +51,17 @@ test("enabled receipt tracking requires every receipt-table column", async () =>
   );
 });
 
-test("reply-aware cursor stays optional while its independent gate is disabled", async () => {
+test("reply activity table stays optional while its independent gate is disabled", async () => {
   const missing = await validateSchemaColumns(createEmptySchemaPool(), {
     studentComplaintReadReceiptsEnabled: true,
     studentComplaintReplyAwareEnabled: false,
   });
 
-  assert.deepEqual(
-    missing
-      .filter(({ table }) => table === receiptTable)
-      .map(({ column }) => column)
-      .sort(),
-    [...expectedReceiptColumns].sort(),
-  );
+  assert.equal(missing.some(({ table }) => table === replyActivityTable), false);
+  assert.deepEqual(missing.filter(({ table }) => table === receiptTable).map(({column}) => column).sort(), [...expectedReceiptColumns].sort());
 });
 
-test("reply-aware gate requires the new cursor column", async () => {
+test("reply-aware gate requires every reply activity table column", async () => {
   const missing = await validateSchemaColumns(createEmptySchemaPool(), {
     studentComplaintReadReceiptsEnabled: true,
     studentComplaintReplyAwareEnabled: true,
@@ -64,9 +69,9 @@ test("reply-aware gate requires the new cursor column", async () => {
 
   assert.deepEqual(
     missing
-      .filter(({ table }) => table === receiptTable)
+      .filter(({ table }) => table === replyActivityTable)
       .map(({ column }) => column)
       .sort(),
-    [...expectedReceiptColumns, replyCursorColumn].sort(),
+    [...expectedReplyActivityColumns].sort(),
   );
 });

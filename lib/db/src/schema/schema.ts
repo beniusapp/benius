@@ -430,9 +430,7 @@ export const complaintNotes = pgTable("complaint_notes", {
   authorName: varchar("author_name", { length: 100 }).notNull(),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (table) => [
-  index("complaint_notes_reply_cursor_idx").on(table.complaintId, table.authorRole, table.id),
-]);
+});
 
 export const complaintStudents = pgTable("complaint_students", {
   id: serial("id").primaryKey(),
@@ -446,14 +444,28 @@ export const studentComplaintReadReceipts = pgTable("student_complaint_read_rece
   sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
   complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
   readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
-  // This is a durable watermark, so keep it even if an old note is later removed.
-  lastReadNoteId: integer("last_read_note_id"),
 }, (table) => [
   primaryKey({
     columns: [table.schoolId, table.studentId, table.sessionId, table.complaintId],
     name: "student_complaint_read_receipts_pkey",
   }),
   index("student_complaint_read_receipts_complaint_idx").on(table.complaintId),
+]);
+
+// Forward-only reply notifications. No historical rows are backfilled.
+export const studentComplaintNotificationEvents = pgTable("student_complaint_notification_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  noteId: integer("note_id").references(() => complaintNotes.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+}, (table) => [
+  index("student_complaint_notification_events_scope_idx")
+    .on(table.schoolId, table.studentId, table.sessionId, table.complaintId, table.readAt),
+  index("student_complaint_notification_events_note_idx").on(table.noteId),
 ]);
 
 export const examScores = pgTable("exam_scores", {

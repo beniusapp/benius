@@ -1,0 +1,65 @@
+BENIUS — COMPLETE COMPLAINTS RED-DOT FEATURE
+FORWARD-ONLY APPROACH
+
+DECISION CONFIRMED
+
+Implement reply-aware Complaints notifications for NEW activity going forward, without rewriting or guessing historical read receipts.
+
+Use the existing Stage 1 implementation and prepared migration 020. Do not restart the project from scratch.
+
+REQUIRED BEHAVIOR
+
+1. Existing complaint read receipts must remain unchanged.
+2. Previously read complaints must not suddenly become unread solely because of historical replies.
+3. A new Teacher-to-Student complaint must trigger the dashboard red dot.
+4. A new Student-visible Teacher/Admin reply after activation must make the relevant complaint unread again.
+5. Student replies must not trigger the dot.
+6. Opening the Complaints module alone must not clear unread complaints.
+7. After the student successfully loads and opens an individual complaint, mark only the activity actually displayed as read.
+8. The red dot disappears when no unread complaints remain.
+9. Resolved complaints remain in history.
+10. Read state persists across refreshes, logins and devices.
+
+IMPLEMENTATION
+
+A. Reuse migration 020 and the existing Development-only feature gate.
+
+B. Establish a safe forward-only activation boundary for new qualifying notes. Do not infer the boundary from historical timezone-less timestamps or assume note IDs reflect commit order.
+
+C. Preserve existing receipts. For complaints already read before activation, use a reliable activation baseline without rewriting historical receipt rows.
+
+D. Implement the authenticated, School/Student/Academic Session-scoped unread-count API and dashboard query.
+
+E. Implement concurrency-safe note writes and mark-read operations so a reply arriving while a student opens a complaint cannot be incorrectly acknowledged.
+
+F. Keep existing module-level seen cursors for compatibility, but use the new unread state for the Complaints dashboard red dot when the new feature is active.
+
+G. Leave Homework, Classwork, Noticeboard, other portals and Mobile unchanged.
+
+H. Add focused regression tests for forward-only activation, new replies, concurrent activity, read acknowledgements, resolved complaints, session isolation and disabled-feature fallback.
+
+IMPORTANT SAFETY
+
+- You may prepare application code, migration files and tests.
+- Do not run SQL or apply migration 020.
+- Do not backfill or rewrite historical receipt records.
+- Do not enable feature flags.
+- Do not restart or deploy.
+- Do not touch Production.
+- Do not change financial or attendance logic.
+- Preserve existing working complaint read receipts.
+
+If the activation boundary or concurrency guarantee cannot be implemented safely without an additional schema change, explain the smallest necessary change rather than inventing a workaround.
+
+FINAL REPORT
+
+Tell me:
+1. What was implemented.
+2. How historical read state is preserved.
+3. How the forward-only boundary works.
+4. How concurrent replies are protected.
+5. Whether migration 020 needs adjustment.
+6. Tests and build results.
+7. What remains before activation.
+
+STOP after code preparation. Wait for my approval before database or runtime changes.
