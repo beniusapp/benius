@@ -1,0 +1,103 @@
+BENIUS — PRINCIPAL PORTAL → AUDIT LOG
+
+STAGE AL-R1: TARGETED READ-ONLY FUNCTIONAL AND SECURITY AUDIT
+
+CONTEXT:
+BENIUS is a multi-tenant School Management Application currently in Development.
+
+We are now reviewing the existing Principal Portal → Audit Log module.
+
+OBJECTIVE:
+Understand the current implementation, identify confirmed functional or security problems, and recommend only essential corrections.
+
+1. CURRENT FUNCTIONALITY
+
+Inspect the Audit Log module end to end.
+
+Explain:
+- Which user activities are recorded.
+- Which portals and modules generate audit events.
+- What information is stored for each event.
+- Whether the actor, action, timestamp, affected record, and outcome are captured.
+- How Principals search, filter, and view audit history.
+- Whether pagination, sorting, and export are implemented.
+- Whether audit records can be edited or deleted.
+
+2. ARCHITECTURE
+
+Identify:
+- Frontend components and pages.
+- Backend routes and middleware.
+- Database tables and relevant columns.
+- Audit logging services and helper functions.
+- Authentication and authorization checks.
+
+Provide relevant file paths and line references.
+
+3. SECURITY AND ISOLATION
+
+Verify:
+- Strict school/tenant isolation.
+- Correct Academic Session scoping wherever applicable.
+- Only authorized users can view audit logs.
+- Users cannot modify or delete audit history through exposed APIs.
+- Actor identity is derived from authenticated server-side context rather than trusted client input.
+- Sensitive information such as passwords, PINs, session cookies, payment secrets, and tokens is never stored in audit details.
+- Audit endpoints cannot expose another school's data.
+- Search, filters, pagination, and export preserve access restrictions.
+
+4. AUDIT INTEGRITY
+
+Check:
+- Whether important create, update, delete, login, permission, and financial actions generate appropriate audit records.
+- Whether successful and failed operations are represented accurately.
+- Whether logging failures are handled safely.
+- Whether timestamps are stored consistently and displayed in IST (Asia/Kolkata).
+- Whether historical audit records remain unchanged.
+- Whether there are gaps in important activity coverage.
+
+5. UI AND FUNCTIONALITY
+
+Identify:
+- Broken or nonfunctional buttons.
+- Placeholder functionality.
+- Incorrect labels or misleading audit information.
+- Missing filters or pagination.
+- Any performance risks from large audit histories.
+
+6. TEST COVERAGE
+
+Inspect existing tests.
+
+Run only safe, isolated, read-only or mocked tests that cannot modify databases or application data.
+
+Do not create audit records merely to test logging.
+
+STRICT RULES:
+
+- READ-ONLY AUDIT.
+- Do not modify code, database, configuration, or records.
+- Do not generate new audit events.
+- Do not run database migrations.
+- Do not restart services.
+- Do not deploy or publish.
+- Do not change authentication, payment processing, or financial calculations.
+- Do not touch External Portal, Reminders, Fee Structures, or unrelated modules.
+- Do not work on Mobile.
+- Do not perform a broad application-wide audit.
+
+REPORT FORMAT:
+
+A. Current Audit Log functionality — explain simply.
+B. Architecture — frontend, backend, database.
+C. What works correctly.
+D. Confirmed issues — Critical / High / Medium / Low, with file and line evidence.
+E. Missing or incomplete functionality.
+F. Existing test coverage.
+G. Minimum necessary fixes, prioritized.
+
+Clearly distinguish confirmed bugs from optional improvements.
+
+Keep the report concise and actionable.
+
+DO NOT IMPLEMENT ANYTHING YET.
