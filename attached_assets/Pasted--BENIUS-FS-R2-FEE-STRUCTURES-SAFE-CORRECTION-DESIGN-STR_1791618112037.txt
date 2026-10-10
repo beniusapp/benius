@@ -1,0 +1,145 @@
+# BENIUS — FS-R2
+## FEE STRUCTURES — SAFE CORRECTION DESIGN
+### STRICTLY READ-ONLY — NO CODE OR DATABASE CHANGES
+
+We have completed FS-R1 for Principal Portal → Fees & Payments → Fee Structures.
+
+FS-R1 confirmed that Fee Structure editing can synchronize or delete active-session unpaid invoices by `feeType`, even when multiple Fee Structures share that type.
+
+The owner has approved proceeding toward a correction, but has NOT authorized implementation or database changes yet.
+
+This is a short, focused technical feasibility check. Do not repeat FS-R1.
+
+## 1. Primary problem
+
+Example:
+
+- Structure A: Tuition Fee, Class 1, ₹1,000.
+- Structure B: Tuition Fee, Class 8, ₹2,000.
+- Both have the same `feeType`.
+
+Editing Structure A must NEVER modify or delete invoices belonging to Structure B.
+
+Inspect the actual schema, invoice-generation service and Fee Structure edit synchronization.
+
+Determine:
+
+1. Does `fee_records` already store a reliable Fee Structure ID?
+2. If yes, is it populated consistently during invoice generation?
+3. If no, is there another reliable existing relationship?
+4. Can historical invoices be attributed to an exact structure without guessing?
+5. What is the smallest safe correction?
+6. Would it require a schema change or data migration?
+7. How should existing invoices with unknown structure ownership be handled safely?
+
+IMPORTANT: Never assume `feeType`, class or amount alone proves invoice ownership.
+
+If ownership is ambiguous, the safest default is to skip automatic synchronization/deletion for those invoices and report the limitation.
+
+## 2. Required safety behavior
+
+Any proposed correction must preserve:
+
+- Strict authenticated school isolation.
+- School-global Fee Structures.
+- Session-owned invoices.
+- Active-session-only synchronization.
+- Archived invoice protection.
+- Paid invoice protection.
+- Partially paid invoice protection, including legacy records.
+- Existing payment/refund history.
+- Existing financial formulas.
+- Existing invoice amounts unless an authorized, precisely targeted synchronization applies.
+
+No invoice may be deleted or rewritten merely because it shares a fee type.
+
+## 3. Other three confirmed FS-R1 issues
+
+Briefly identify the smallest safe correction for:
+
+A. Backend validation that fee breakdown components add up to the authoritative structure amount.
+
+B. Keeping an eligible invoice's breakdown snapshot consistent when its amount is legitimately synchronized.
+
+C. Rejecting reversed or overlapping tiered late-fee ranges.
+
+For each, explain:
+
+- Exact affected file/function.
+- Proposed minimal change.
+- Whether it alters existing financial formulas.
+- Whether existing historical records would be affected.
+- Tests needed.
+
+Do not implement any correction.
+
+## 4. Do not expand scope
+
+Do not review or modify:
+
+- Financial Analytics.
+- Ledger & Transactions.
+- Reminders.
+- External Portal.
+- Audit Log.
+- Mobile application or APIs.
+- Payment/refund processing.
+- Other unrelated Fee Structures behavior.
+
+No broad architecture redesign.
+
+## 5. Required short response
+
+Provide only:
+
+### A. Existing invoice ownership
+
+Does an exact Fee Structure → Invoice link already exist? YES / NO / PARTIAL.
+
+Explain with exact source references.
+
+### B. Safest solution
+
+Recommend ONE minimal implementation approach, including how to handle ambiguous legacy invoices.
+
+### C. Database impact
+
+Schema change required: YES / NO.
+
+Data migration required: YES / NO.
+
+Explain briefly.
+
+### D. Three validation/snapshot corrections
+
+One short row per issue.
+
+### E. Proposed tests
+
+List only essential regression tests.
+
+### F. Implementation scope
+
+Exact files expected to change.
+
+### G. Owner approval required
+
+Clearly state what must be approved before implementation.
+
+## 6. Strict restrictions
+
+- No source modifications.
+- No test-file modifications.
+- No database access or mutations.
+- No schema migrations.
+- No backfills.
+- No invoice generation.
+- No payment/refund actions.
+- No deployments or workflow restarts.
+- No new infrastructure installation.
+- No Mobile work.
+
+After the short response, STOP.
+
+Do not implement automatically.
+Do not propose additional audit stages.
