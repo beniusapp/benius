@@ -1,0 +1,130 @@
+BENIUS — STUDENT PORTAL → FEES
+
+STAGE SF-0: UNDERSTAND EXISTING LOGIC (READ-ONLY)
+
+I want you to inspect my existing BENIUS Student Portal → Fees module and explain exactly how it currently works.
+
+IMPORTANT:
+This is NOT an audit or a request to fix anything.
+
+Do not assume the intended behavior. Explain what is actually implemented in the existing code.
+
+1. COMPLETE FEES MODULE LOGIC
+
+Explain:
+- What features are currently available in Student Portal → Fees?
+- How are fee invoices fetched and displayed?
+- How are paid, unpaid, partially paid and overdue fees handled?
+- How are outstanding amounts, late fees, payments and refunds calculated?
+- What payment methods and receipt/download options exist?
+- What happens when a student opens this module?
+
+2. ACADEMIC SESSION LOGIC
+
+Explain in detail:
+- Where does the selected Academic Session ID come from?
+- How is it passed from the frontend to the backend?
+- Does every Fees API use the selected Academic Session ID?
+- What happens when the student switches to a previous Academic Session?
+- What happens when switching back to the current Academic Session?
+- Does the invoice list, payment history, outstanding amount and receipt list change with the selected session?
+- How does the frontend prevent data from one session appearing in another?
+- What happens if no enrollment or fee records exist for the selected session?
+- Are archived Academic Sessions read-only?
+
+3. STUDENT ID + ENROLLMENT ID + ACADEMIC SESSION ID
+
+Explain the current relationship between:
+- School ID
+- Student ID
+- Enrollment ID
+- Academic Session ID
+
+Trace how each is resolved in Student Fees.
+
+Specifically explain:
+- Does Student Fees use the student's current enrollment or historical enrollment?
+- When selecting an older session, where do class, section and roll number come from?
+- Is the selected session's enrollment used to identify applicable fee records?
+- Are fee records linked to Student ID, Enrollment ID, Academic Session ID, or a combination?
+- What happens when a student is promoted to another class in a new session?
+- Can the same student have different enrollment records across sessions?
+
+4. PDF, RECEIPT AND PRINT LOGIC
+
+Identify every PDF, receipt, download and print feature available in Student Fees.
+
+For each one, explain:
+- Which frontend/backend function generates it.
+- Which API supplies its data.
+- Where the Student ID comes from.
+- Where the Academic Session ID comes from.
+- Where the Enrollment ID comes from, if used.
+- Where class, section and roll number come from.
+- Whether it uses historical or current enrollment information.
+- Whether payment and refund amounts are session-specific.
+- Whether switching sessions changes the documents available.
+
+5. FRONTEND AND BACKEND FLOW
+
+Identify the actual relevant:
+- Frontend files and components.
+- API endpoints.
+- Backend functions.
+- Database tables.
+- Enrollment relationships.
+- PDF generation functions.
+
+Provide file paths and line references.
+
+6. EXISTING BEHAVIOR SUMMARY
+
+Provide a matrix showing the actual behavior of:
+
+- Fee invoice list
+- Fee details
+- Outstanding balance
+- Payment history
+- Refund information
+- Receipt list
+- Receipt PDF
+- Other PDF/print features
+- Class, section and roll number
+
+For each, indicate:
+- Whether it uses Student ID.
+- Whether it uses Enrollment ID.
+- Whether it uses selected Academic Session ID.
+- Whether it uses current or historical student information.
+- What happens when Academic Session changes.
+
+Mark any behavior that cannot be established as UNKNOWN.
+
+STRICT RULES:
+
+- READ-ONLY CODE DISCOVERY ONLY.
+- Do not modify code, database, configuration or records.
+- Do not run tests yet.
+- Do not generate invoices, payments or receipts.
+- Do not call payment providers.
+- Do not restart, deploy or publish.
+- Do not modify Student Profile.
+- Do not touch Principal Portal, Ledger, Financial Analytics or Fee Structures.
+- Do not work on Mobile.
+- Do not propose or implement fixes.
+- Do not perform a general security audit.
+
+FINAL REPORT:
+
+A. Existing Student Fees functionality.
+B. Academic Session selection and switching logic.
+C. Student ID + Enrollment ID + Academic Session ID relationships.
+D. Historical versus current class/section/roll behavior.
+E. Payment, outstanding and refund logic.
+F. PDF and receipt generation logic.
+G. Behavior matrix for every major Fees feature.
+H. Relevant files, APIs and database tables.
+
+Explain everything in simple language, supported by actual code references.
+
+STOP after reporting. We will decide the next steps ourselves.
