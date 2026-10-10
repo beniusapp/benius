@@ -1,0 +1,97 @@
+BENIUS — STUDENT PORTAL
+
+STAGE SC-1: CONDUCT & GRIEVANCE NOTIFICATION BADGE INVESTIGATION
+
+TARGET:
+/student/complaints
+
+SPECIFIC ISSUE:
+
+In the Student Portal → Conduct & Grievance → From Teachers tab, the notification badge still shows "1" even though the displayed teacher complaint is marked Resolved and the student has already opened/read it.
+
+OBJECTIVE:
+
+Identify why the badge remains visible and determine the smallest safe correction.
+
+STRICTLY READ-ONLY. DO NOT MODIFY CODE.
+
+PART A — EXISTING BADGE LOGIC
+
+Inspect the Student Portal Conduct & Grievance implementation.
+
+Determine:
+
+1. What does the "From Teachers" badge currently count?
+2. Does it count all teacher alerts, unresolved alerts, or unread alerts?
+3. Is the count calculated in the frontend or backend?
+4. Which API supplies the records?
+5. Does the underlying data include read/unread or seen timestamps?
+6. Does opening an alert mark it read?
+7. Does resolving a complaint affect the badge?
+8. Does React Query caching cause an outdated count?
+
+Identify exact files, functions, APIs and line references.
+
+PART B — EXPECTED UNREAD BEHAVIOR
+
+Investigate whether the existing architecture supports:
+
+- New unread teacher alert → badge visible.
+- Student opens and reads alert → unread badge disappears.
+- Resolved and already-read alert → no unread badge.
+- New alert arrives → badge reappears.
+- Historical resolved alerts remain accessible in the list.
+
+Do not hide or delete historical complaint records.
+
+PART C — OTHER TABS
+
+Check whether the following tabs have similar notification behavior:
+
+- Staff Grievance
+- Peer Reports
+
+Identify whether their badges are intended to represent unread messages, unresolved actions, or total records.
+
+Do not change their behavior during this investigation.
+
+PART D — ISOLATION AND SAFETY
+
+Verify that any read/unread state is isolated by:
+
+- Authenticated Student ID.
+- School/Tenant ID.
+- Academic Session ID where applicable.
+
+Ensure one student cannot clear another student's notifications.
+
+PART E — REPORT
+
+Provide:
+
+A. Root cause of the incorrect badge.
+
+B. Current count formula and API source.
+
+C. Whether persistent read/unread state already exists.
+
+D. Whether this can be corrected frontend-only or requires backend support.
+
+E. Smallest recommended fix.
+
+F. Tests needed.
+
+G. Exact file/line references.
+
+STRICT RULES:
+
+- READ-ONLY SOURCE INSPECTION.
+- No database/schema changes.
+- No complaint status changes.
+- No marking records read during investigation.
+- No API restart.
+- No deployment.
+- No Production changes.
+- No Mobile work.
+
+Stop after reporting and wait for approval.
