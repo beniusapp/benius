@@ -19,6 +19,12 @@ For test bundles that import `sharp`, externalize that package and emit the Comm
 
 **How to apply:** Use esbuild's `--external:sharp` flag for these tests and run the output from inside the API package's `node_modules/.cache` directory.
 
+For tests that render PDFs through PDFKit, externalize `pdfkit` as well.
+
+**Why:** Bundling PDFKit into the generated test file relocates its standard-font data lookup relative to the test bundle, where the package's `data/Helvetica.afm` file is not present.
+
+**How to apply:** Add `--external:pdfkit` to CommonJS API test bundles that exercise PDF rendering, alongside any other required native-package externalization.
+
 Do not externalize all packages in API test bundles. Let esbuild bundle workspace packages, while still externalizing `sharp` when needed.
 
 **Why:** Leaving `@workspace/db` external resolved to its TypeScript source entry, whose directory import Node 20 rejects from CommonJS (`ERR_UNSUPPORTED_DIR_IMPORT`).

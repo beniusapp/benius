@@ -1,0 +1,173 @@
+# BENIUS — STAGE 1C-1V-B4-C
+## Fix Archived Academic Session Ledger PDF Export (403 Error)
+### OWNER APPROVED — NARROW IMPLEMENTATION ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+### OBJECTIVE
+
+Fix the following issue:
+
+When an authorized Principal/Admin exports a Ledger PDF using POST from an archived Academic Session, the API returns:
+
+`403 ARCHIVE_READ_ONLY`
+
+The endpoint generates a read-only PDF and should be permitted for archived Academic Sessions.
+
+**IMPORTANT: DO NOT CHANGE ANY EXISTING FEES & PAYMENTS FINANCIAL BUSINESS LOGIC.**
+
+### 1. Mandatory read-only preflight
+
+Before modifying anything, inspect the current implementation of:
+
+- `POST /api/admin/fees/ledger/pdf`
+- `GET /api/admin/fees/ledger/pdf`
+- The shared Academic Session read-only guard.
+- B4-A secure logo loading.
+- B4-B invoice-selection validation and authorization.
+- The Web Ledger PDF export caller.
+
+Confirm that the POST route:
+
+- Does not insert, update or delete financial records.
+- Does not modify Academic Session state.
+- Does not initiate payments, refunds or gateway calls.
+- Does not modify invoice or payment statuses.
+- Does not invoke any helper with database-write side effects.
+- Does not make outbound network requests through logo loading.
+- Generates its PDF from authorized, session-scoped read operations.
+
+If any of these conditions cannot be established, **STOP without making changes** and report the issue.
+
+### 2. Minimal authorization correction
+
+Locate the archived-session POST allowlist in:
+
+`artifacts/api-server/src/routes/routes.ts`
+
+Confirm the exact mounted route path and method.
+
+Add **only** the exact Ledger PDF POST endpoint to the existing archived-session read-only exception mechanism.
+
+Do not use a broad prefix, wildcard or substring match.
+
+Do not allow other POST operations.
+
+Do not change the shared guard's behavior for any existing routes.
+
+Preserve authenticated school, role, permission and Academic Session validation.
+
+### 3. Preserve B4-A and B4-B
+
+Do not modify:
+
+- Secure local logo resolution.
+- External URL rejection.
+- Invoice selection validation.
+- All-or-nothing invoice authorization.
+- Select-all and exclusion semantics.
+- Web Academic Session selection reset.
+- Historical Class/Section placement.
+
+### 4. Required tests
+
+Add or update focused tests verifying:
+
+**Archived Academic Sessions**
+
+- Authorized Ledger PDF POST reaches the export handler instead of being blocked by `ARCHIVE_READ_ONLY`.
+- Archived Ledger PDF GET remains permitted.
+- Malformed selections remain rejected.
+- Foreign-school and foreign-session selections remain rejected by the existing selection controls.
+- Valid selections retain the existing report population.
+- The endpoint does not write financial records.
+
+**Financial protections**
+
+Confirm that archived-session POST requests for invoice modifications, payment modifications, refunds and other financial writes remain blocked.
+
+**Authorization**
+
+Confirm that unauthenticated or unauthorized users cannot gain Ledger PDF access.
+
+Confirm that the exception applies only to the exact intended method and path.
+
+**Regressions**
+
+Run existing:
+- B4-A logo-security tests.
+- B4-B selection tests.
+- Historical-placement tests.
+- Academic Session guard tests.
+- Relevant Ledger PDF tests.
+
+Run API and Web builds where applicable.
+
+Report existing unrelated TypeScript diagnostics separately.
+
+### 5. Database testing
+
+Do not resume the B4-BV disposable database investigations.
+
+Do not create a new PostgreSQL cluster.
+
+Do not connect to Development or Production databases.
+
+Use focused mocked/synthetic tests where possible.
+
+If database-backed behavior cannot be verified, clearly report it as NOT VERIFIED.
+
+Do not claim a full integration PASS without running integration tests.
+
+### 6. Strictly prohibited changes
+
+DO NOT:
+
+- Change invoice calculations.
+- Change discounts.
+- Change paid or outstanding balances.
+- Change payment processing.
+- Change refund processing.
+- Change fee structures.
+- Change financial database schemas.
+- Change historical placement logic.
+- Modify existing financial records.
+- Change Academic Session activation.
+- Weaken school/tenant isolation.
+- Modify other export permissions.
+- Change the global read-only policy beyond this exact endpoint.
+- Deploy.
+- Restart existing application workflows.
+- Begin another development stage.
+
+### 7. Required report
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / BLOCKED / FAIL.
+2. Exact files modified.
+3. Confirmation that the POST route is read-only.
+4. Exact authorization exception added.
+5. Archived Ledger PDF POST test result.
+6. Archived Ledger PDF GET test result.
+7. Financial-write protection test results.
+8. Authentication and tenant-isolation test results.
+9. B4-A and B4-B regression results.
+10. Historical-placement regression results.
+11. API build result.
+12. Web build result.
+13. Typecheck results.
+14. Database-backed verification status.
+15. Financial business-logic changes, if any.
+16. Database records modified, if any.
+17. Development or Production database access.
+18. Workflow restart or deployment status.
+19. Remaining issues or limitations.
+
+### 8. Mandatory stop
+
+After completing B4-C, **STOP AND WAIT FOR OWNER REVIEW**.
+
+Do not automatically begin B4-D or any further changes.
+
+The objective is only to allow safe Ledger PDF exports from archived Academic Sessions while preserving all existing Fees & Payments behavior.

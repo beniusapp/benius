@@ -420,7 +420,8 @@ export async function checkSessionContext(
   const isReadOnlyTransactionExport =
     req.method === "POST" && (
       req.path === "/api/admin/fees/payments/report/pdf" ||
-      req.path === "/api/admin/fees/export-ledger"
+      req.path === "/api/admin/fees/export-ledger" ||
+      req.path === "/api/admin/fees/ledger/pdf"
     );
   const isExternalPortalGlobalMutation = MUTATION_METHODS.has(req.method) && (
     req.path === "/api/admin/fees/external-settings/verify-access" ||
