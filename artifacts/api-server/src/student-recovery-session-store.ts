@@ -4,6 +4,7 @@ import connectPgSimple from "connect-pg-simple";
 import type { Pool } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { pool } from "./db";
+import { isStartupMaintenanceEnabled } from "./startup-maintenance-safety";
 
 const suppressStoreWrite = Symbol("suppressStudentRecoveryStaleStoreWrite");
 const recoveryMutation = Symbol("studentRecoveryStoreMutation");
@@ -181,11 +182,21 @@ export class StudentRecoverySafePgStore extends PgStore {
   private readonly storeReady: Promise<void>;
 
   constructor(databasePool: Pool = pool) {
-    super({ pool: databasePool, createTableIfMissing: true });
+    super({
+      pool: databasePool,
+      createTableIfMissing: isStartupMaintenanceEnabled(),
+    });
     this.databasePool = databasePool;
     this.storeReady = new Promise<void>((resolve, reject) => {
       super.get("__student_recovery_store_init__", error => error ? reject(error) : resolve());
     });
+    // Attach a rejection handler immediately; startup awaits the original promise
+    // after guarded maintenance so a missing required session table is explicit.
+    void this.storeReady.catch(() => {});
+  }
+
+  async waitUntilReady(): Promise<void> {
+    await this.storeReady;
   }
 
   override set(

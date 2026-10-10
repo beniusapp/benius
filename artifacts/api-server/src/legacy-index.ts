@@ -21,9 +21,11 @@ import { enforceSessionRevocation } from "./session-revocation";
 import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
 import { rejectBearerOutsideMobileAuth, shouldLogJsonResponseBody } from "./mobile-auth-policy";
 import { ensureMobileAuthSchema } from "./mobile-auth-schema";
+import { runStartupMaintenance } from "./startup-maintenance-safety";
 
 const app = express();
 const httpServer = createServer(app);
+const studentRecoverySessionStore = new StudentRecoverySafePgStore(pool);
 app.use(rejectBearerOutsideMobileAuth);
 app.use("/api", healthRouter);
 
@@ -46,7 +48,7 @@ app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(
   session({
-    store: new StudentRecoverySafePgStore(pool),
+    store: studentRecoverySessionStore,
     secret: process.env.SESSION_SECRET || "benius-secret-key",
     resave: false,
     saveUninitialized: false,
@@ -98,6 +100,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  const startupMaintenanceRan = await runStartupMaintenance(async () => {
   // ===== DB MIGRATIONS (safe, idempotent) =====
   // Dunning used to have a single global status row. Keep that legacy row
   // untouched, add tenant ownership for new rows, and repair the old sequence
@@ -1389,6 +1392,22 @@ app.use((req, res, next) => {
       ON homework_views(homework_id, student_id);
   `);
   await ensureMobileAuthSchema(pool);
+  });
+  if (!startupMaintenanceRan) {
+    log(
+      "Development startup maintenance is disabled; read-only schema validation remains active.",
+      "startup",
+    );
+  }
+  try {
+    await studentRecoverySessionStore.waitUntilReady();
+  } catch (error) {
+    log(
+      "Required PostgreSQL session storage is unavailable; startup cannot continue with automatic schema creation disabled.",
+      "startup",
+    );
+    throw error;
+  }
   await assertNoSchemaDrift(pool);
 
   await registerRoutes(httpServer, app);
