@@ -90,3 +90,41 @@ test("structure-generated invoices persist their exact source structure ID", asy
   });
   assert.equal(inserted.feeStructureId, 61);
 });
+
+test("structure invoice generation rejects a stored component total mismatch", async (t) => {
+  const target = storage as any;
+  const names = ["getFeeStructureById", "getActiveSession"];
+  const originals = names.map(name => ({
+    name,
+    hadOwn: Object.prototype.hasOwnProperty.call(target, name),
+    original: target[name],
+  }));
+  target.getFeeStructureById = async (structureId: number, schoolId: number) => ({
+    id: structureId,
+    schoolId,
+    name: "Tuition",
+    feeType: "Tuition",
+    amount: 1000,
+    frequency: "annual",
+    dueDayOfMonth: 15,
+    breakdown: [{ name: "Tuition", purpose: "", amount: 900 }],
+    lateFeeConfig: null,
+  });
+  target.getActiveSession = async () => ({
+    id: 12,
+    sessionName: "2026-2027",
+    startDate: "2026-04-01",
+    endDate: "2027-03-31",
+  });
+  t.after(() => {
+    for (const { name, hadOwn, original } of originals.reverse()) {
+      if (hadOwn) target[name] = original;
+      else delete target[name];
+    }
+  });
+
+  await assert.rejects(
+    prepareStructureInvoiceContext({ schoolId: 4, structureId: 61 }),
+    error => error instanceof InvoiceGenerationError && /must match/.test(error.message),
+  );
+});

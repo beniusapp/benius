@@ -1,0 +1,106 @@
+# BENIUS — FS-R4
+## FEE STRUCTURES — MIGRATION PREPARATION & FINAL REGRESSION TESTS
+
+FS-R3 implemented the approved Fee Structures corrections, but runtime deployment remains BLOCKED.
+
+This is a focused completion task, not a new audit.
+
+## 1. Migration preparation
+
+The application schema now includes nullable `feeStructureId` on `fee_records`.
+
+Inspect existing repository configuration, scripts and migration conventions to establish the correct active migration process.
+
+Do not assume `.migration-backup/migrations` is the active migration directory.
+
+If a reliable process can be established:
+
+- Prepare a new additive migration file.
+- Add only the nullable source-ID column using the actual database naming conventions.
+- Do not create a foreign key that would remove historical source attribution when a structure is deleted.
+- Do not backfill existing invoice records.
+- Do not modify existing financial columns or values.
+- Verify the migration file against the schema definition using static checks.
+
+If the active migration process cannot be established confidently, STOP migration preparation and report the precise blocker.
+
+Do not invent a migration directory or introduce a new migration framework without approval.
+
+## 2. Focused regression tests
+
+Complete the missing critical synthetic/mock tests covering:
+
+1. Two structures with the same fee type: editing one cannot modify the other's invoices.
+2. Class narrowing cannot delete another structure's invoices.
+3. Unlinked legacy invoices are preserved.
+4. Cross-school invoices are excluded.
+5. Archived-session invoices are excluded.
+6. Paid and partially paid invoices are excluded.
+7. Any invoice with payment history is excluded, regardless of status.
+8. Newly generated invoices store the correct source structure ID.
+9. Deleting a structure preserves invoices and historical source IDs.
+10. Backend rejects incorrect breakdown totals.
+11. Eligible invoice amount and breakdown snapshot are synchronized together.
+12. Overlapping/reversed late-fee ranges are rejected; valid adjacent ranges are accepted.
+13. Existing late-fee calculation behavior is unchanged.
+
+Use synthetic data only.
+
+Test actual affected code paths where practical. If a test only checks SQL fragments or mocked predicates, label it accurately.
+
+Do not create a database or install new infrastructure.
+
+## 3. Verify existing changes
+
+Confirm the implementation remains limited to the four owner-approved corrections.
+
+Do not change financial formulas, payment/refund processing, Academic Session management, or other Fees & Payments modules.
+
+If tests expose a defect within the approved scope, report the exact defect and the smallest proposed correction. Do not introduce unrelated fixes.
+
+## 4. Strict restrictions
+
+- Do not access or modify real database records.
+- Do not execute migrations.
+- Do not run database push/sync commands.
+- Do not generate real invoices.
+- Do not run backfills.
+- Do not deploy.
+- Do not restart workflows.
+- Do not modify Mobile code or APIs.
+- Do not change financial formulas.
+- Do not modify historical invoices or payment/refund records.
+
+## 5. Final report
+
+Return:
+
+### A. Migration readiness
+- Active migration process identified: YES/NO.
+- Migration file prepared: YES/NO.
+- Migration executed: NO.
+- Database runtime verified: NO.
+
+### B. Regression test results
+- Number passed/failed.
+- Which critical scenarios were covered.
+- Which remain unverified.
+- Whether tests exercised real application code or only mocks.
+
+### C. Build results
+- API build.
+- Web build.
+- Relevant TypeScript findings.
+
+### D. Remaining blockers
+Only concrete blockers.
+
+### E. Final recommendation
+Choose:
+- READY FOR SEPARATELY APPROVED MIGRATION
+- BLOCKED — MIGRATION PROCESS UNRESOLVED
+- BLOCKED — CONFIRMED REGRESSION
+
+After reporting, STOP.
+
+Do not deploy or execute the migration.

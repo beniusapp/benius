@@ -1,5 +1,17 @@
+import { buildBreakdownSnapshot, type BreakdownComponent } from "./invoice-snapshot";
+
 export type FeeBreakdownItem = { name: string; purpose?: string; amount: number };
 export type TieredLateFeeSlab = { from_day: number; to_day: number; amount: number };
+
+export function buildFeeStructureAmountSyncPatch(
+  amount: number,
+  breakdown: readonly FeeBreakdownItem[],
+): { amount: number; breakdownSnapshot: BreakdownComponent[] } {
+  return {
+    amount,
+    breakdownSnapshot: buildBreakdownSnapshot(breakdown),
+  };
+}
 
 export function feeBreakdownTotalError(
   amount: number,

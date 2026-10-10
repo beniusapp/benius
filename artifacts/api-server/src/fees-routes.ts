@@ -47,7 +47,12 @@ import {
   isStudentEligibleForStructure,
   prepareStructureInvoiceContext,
 } from "./structure-invoice-service";
-import { feeBreakdownTotalError, tieredSlabsError } from "./fee-structure-validation";
+import {
+  buildFeeStructureAmountSyncPatch,
+  feeBreakdownTotalError,
+  tieredSlabsError,
+} from "./fee-structure-validation";
+import { feeStructureInvoiceMutationWhere } from "./fee-structure-mutation-sql";
 import { buildBreakdownSnapshot } from "./invoice-snapshot";
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import { renderInvoiceDocument } from "./invoice-document";
@@ -1151,7 +1156,7 @@ export function registerFeesRoutes(app: Express) {
       const [before] = await tx.select().from(feeStructures).where(and(
         eq(feeStructures.id, id),
         eq(feeStructures.schoolId, schoolId),
-      ));
+      )).for("update");
       if (!before) return null;
       const effectiveAmount = Number(parsed.data.amount ?? before.amount);
       const effectiveBreakdown = parsed.data.breakdown ?? before.breakdown ?? [];
@@ -1200,20 +1205,15 @@ export function registerFeesRoutes(app: Express) {
       if (activeSessionId != null && (amountChanged || feeTypeChanged)) {
         const patch: Record<string, unknown> = {};
         if (amountChanged) {
-          patch.amount = parsed.data.amount;
-          patch.breakdownSnapshot = buildBreakdownSnapshot(updated.breakdown);
+          Object.assign(patch, buildFeeStructureAmountSyncPatch(
+            effectiveAmount,
+            effectiveBreakdownSchema.data,
+          ));
         }
         if (feeTypeChanged) patch.feeType = parsed.data.feeType;
-        const synced = await tx.update(feeRecords).set(patch as any).where(and(
-          eq(feeRecords.schoolId, schoolId),
-          eq(feeRecords.sessionId, activeSessionId),
-          eq(feeRecords.feeStructureId, id),
-          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
-          sql`NOT EXISTS (
-            SELECT 1 FROM payment_records fee_structure_payment
-            WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
-          )`,
-        )).returning({ id: feeRecords.id });
+        const synced = await tx.update(feeRecords).set(patch as any).where(
+          feeStructureInvoiceMutationWhere({ schoolId, activeSessionId, feeStructureId: id }),
+        ).returning({ id: feeRecords.id });
         syncedCount = synced.length;
       }
       if (activeSessionId != null && dueDayChanged) {
@@ -1230,12 +1230,7 @@ export function registerFeesRoutes(app: Express) {
           )
           WHERE school_id = ${schoolId}
             AND session_id = ${activeSessionId}
-            AND fee_structure_id = ${id}
-            AND status IN ('Due', 'Overdue')
-            AND NOT EXISTS (
-              SELECT 1 FROM payment_records fee_structure_payment
-              WHERE fee_structure_payment.fee_record_id = fee_records.id
-            )
+            AND ${feeStructureInvoiceMutationWhere({ schoolId, activeSessionId, feeStructureId: id })}
           RETURNING id
         `);
         if (!amountChanged && !feeTypeChanged) syncedCount = dueDateResult.rows.length;
@@ -1253,16 +1248,9 @@ export function registerFeesRoutes(app: Express) {
           amount: feeRecords.amount,
           sessionId: feeRecords.sessionId,
         })
-          .from(feeRecords).where(and(
-            eq(feeRecords.schoolId, schoolId),
-            eq(feeRecords.sessionId, activeSessionId),
-            eq(feeRecords.feeStructureId, id),
-            or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
-            sql`NOT EXISTS (
-              SELECT 1 FROM payment_records fee_structure_payment
-              WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
-            )`,
-          ));
+          .from(feeRecords).where(
+            feeStructureInvoiceMutationWhere({ schoolId, activeSessionId, feeStructureId: id }),
+          );
         if (unpaidRecs.length > 0) {
           const schoolStudents = await tx.select({ id: students.id, class: students.class, name: students.name })
             .from(students).where(eq(students.schoolId, schoolId));
@@ -1276,15 +1264,8 @@ export function registerFeesRoutes(app: Express) {
           const toVoidIds = toVoidRecords.map(record => record.id);
           if (toVoidIds.length > 0) {
             const removed = await tx.delete(feeRecords).where(and(
-              eq(feeRecords.schoolId, schoolId),
-              eq(feeRecords.sessionId, activeSessionId),
-              eq(feeRecords.feeStructureId, id),
+              feeStructureInvoiceMutationWhere({ schoolId, activeSessionId, feeStructureId: id }),
               sql`id = ANY(${sql.raw(`ARRAY[${toVoidIds.join(",")}]`)})`,
-              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
-              sql`NOT EXISTS (
-                SELECT 1 FROM payment_records fee_structure_payment
-                WHERE fee_structure_payment.fee_record_id = ${feeRecords.id}
-              )`,
             )).returning({ id: feeRecords.id });
             voidedCount = removed.length;
             const removedIds = new Set(removed.map(record => record.id));
@@ -4337,15 +4318,8 @@ export function registerFeesRoutes(app: Express) {
         voided = await db.transaction(async tx => {
           const removed = await tx.delete(feeRecords)
             .where(and(
-              eq(feeRecords.schoolId, schoolId),
-              eq(feeRecords.sessionId, sessionId),
-              eq(feeRecords.feeStructureId, structureId),
+              feeStructureInvoiceMutationWhere({ schoolId, activeSessionId: sessionId, feeStructureId: structureId }),
               sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
-              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
-              sql`NOT EXISTS (
-                SELECT 1 FROM payment_records fee_structure_payment
-                WHERE fee_structure_payment.fee_record_id = fee_records.id
-              )`,
             ))
             .returning({ id: feeRecords.id });
           if (removed.length > 0) {
