@@ -1400,6 +1400,8 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
 
           {/* ── SECTION 2: Promotion Status ─────────────────────────────── */}
           <div className="rounded-xl overflow-hidden"
+            hidden
+            data-testid="activation-promotion-status"
             style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
             <div className="flex items-center gap-2 px-4 py-3"
               style={{ background: "rgba(139,92,246,0.07)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>

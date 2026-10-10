@@ -1,0 +1,68 @@
+BENIUS — SIMPLIFY SESSION ACTIVATION GATE
+
+MODE: TARGETED FRONTEND-ONLY IMPLEMENTATION — DEVELOPMENT
+
+The read-only audit is complete.
+
+OBJECTIVE:
+Remove the unnecessary Promotion Status section from the Principal-facing Session Activation Gate without changing any activation functionality or security.
+
+LOCATION:
+Admin Portal → School Setup → Academic Sessions → Activate → Session Activation Gate
+
+FILE:
+artifacts/benius-web/src/pages/admin-modules/academic-sessions.tsx
+
+REQUIRED CHANGE:
+
+Hide/remove from the Activation Gate UI:
+- Promotion Status card
+- Individual student promotion table
+- Promotion counts and detailed promotion decision messages displayed inside that card
+
+PRESERVE EXACTLY:
+
+1. Safety Lock and requirement to type ACTIVATE.
+2. Student Registry Placement Check and all its counts and warnings.
+3. Activation Effects information.
+4. ALL existing confirmation checkboxes, including "Promotion history is informational".
+5. Existing checkbox validation and button enablement rules.
+6. Activate Session button and its existing behavior.
+7. Existing activation preview and backend validation.
+8. Student enrollment and placement checks.
+9. Academic Session and school/tenant isolation.
+10. Archived-session protection.
+
+IMPORTANT:
+- Do not change promotion history or promotion decisions.
+- Do not change student enrollment records.
+- Do not remove or bypass any confirmation requirement.
+- Do not change activation eligibility.
+- Do not change backend API calls or calculations unless removal of an unused display-only request is proven safe; prefer leaving existing behavior untouched.
+- Do not modify the Exam Controller or Promotion Wizard.
+
+TESTING:
+- Promotion Status section is no longer visible.
+- Student Registry Placement Check remains visible.
+- All confirmation checkboxes remain present and required.
+- ACTIVATE typing requirement remains enforced.
+- Activation button remains disabled until all existing conditions are satisfied.
+- Existing activation behavior remains unchanged.
+- Run focused Web tests, Web build, and git diff --check.
+
+STRICT SAFETY:
+- Frontend-only changes.
+- No backend or database changes.
+- No real session activation.
+- No SQL writes or migrations.
+- No Production or Mobile changes.
+- No workflow restarts or deployments without approval.
+
+FINAL REPORT:
+- Files changed.
+- Confirmation that only Promotion Status UI was removed.
+- Confirmation that activation safeguards remain unchanged.
+- Test/build results.
+- Whether a Development Web restart is needed.
+
+STOP after implementation and verification. Wait for approval before restarting or deploying.
