@@ -1,0 +1,329 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE FA-R1 — REFUND ACCOUNTING CONTRACT AND FINANCIAL ANALYTICS RECONCILIATION
+### OWNER APPROVED — STRICTLY READ-ONLY AUDIT
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner requests a thorough investigation of the EXISTING refund accounting rules.
+
+This is an AUDIT ONLY.
+
+**DO NOT MODIFY EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+## 1. Audit objective
+
+Investigate and reconcile refund handling across:
+
+1. Principal Portal → Fees & Payments → Ledger & Transactions.
+2. Principal Portal → Fees & Payments → Financial Analytics.
+3. Student Portal → Fees, only where necessary to understand existing refund/outstanding behavior.
+4. Existing invoice, payment, refund, and ledger calculation helpers directly involved in these flows.
+
+Do not expand into unrelated modules.
+
+Determine whether the existing refund accounting behavior is internally consistent, financially accurate under its documented contract, and properly scoped by authenticated school and selected Academic Session.
+
+Do not invent new refund policies.
+
+## 2. Establish the existing refund business contract
+
+Inspect the actual refund implementation, including:
+
+- Refund creation and initiation.
+- Refund approval, if supported.
+- Refund processing and completion.
+- Failed, pending, rejected, or cancelled refunds.
+- Full refunds.
+- Partial refunds.
+- Multiple refunds against the same payment.
+- Refunds associated with online payments.
+- Refunds associated with offline payments, where supported.
+- Payment reversals and adjustments, if supported.
+- Invoice outstanding balance after a processed refund.
+- Invoice paid/partial/unpaid status after a refund.
+- Refund representation in Ledger & Transactions.
+- Refund representation in Principal invoices and receipts.
+- Refund representation in Student Fees.
+- Refund handling in archived Academic Sessions.
+
+Identify the exact source code, database tables, status values, and calculation helpers.
+
+Distinguish documented business rules from assumptions.
+
+## 3. Determine whether a refund reopens an invoice
+
+Investigate this example:
+
+- Original invoice: ₹10,000.
+- Successful payment: ₹10,000.
+- Processed refund: ₹2,000.
+
+Determine what BENIUS CURRENTLY does.
+
+Does the existing system:
+
+A. Restore ₹2,000 to outstanding and treat the invoice as partially unpaid?
+
+B. Keep the invoice settled and report the ₹2,000 as a separate refund?
+
+C. Apply another existing rule depending on refund type, payment method, or status?
+
+Find evidence from:
+
+- Ledger & Transactions.
+- Payment/refund records.
+- Invoice balance calculation.
+- Invoice status calculation.
+- Student Fees.
+- Financial Analytics.
+- Existing tests.
+
+Do not choose or implement a policy.
+
+If different modules disagree, identify exactly where and why.
+
+## 4. Reconcile Financial Analytics
+
+The previous Financial Analytics audit identified:
+
+**Financial Analytics canonical summary:**
+
+`financial-analytics-data.ts`
+
+Outstanding and overdue are derived using billed amounts minus lifetime payments, without adding processed refunds.
+
+**Financial Analytics aging drill-down:**
+
+`fees-routes.ts`
+
+The student drill-down adds processed refunds back to unpaid balances.
+
+**Net Collected:**
+
+The canonical analytics service currently sets:
+
+`netCollected = grossCollected`
+
+It does not query refunds.
+
+Investigate whether these behaviors match the existing Ledger & Transactions accounting contract.
+
+For each of the following, trace the exact implemented formula:
+
+- Gross Collected.
+- Net Collected.
+- Outstanding.
+- Overdue Amount.
+- Receivables Aging.
+- Aging student drill-down.
+- Invoice outstanding balance.
+- Student outstanding balance.
+- Payment status.
+- Refund totals.
+- Ledger balances.
+- Online/offline collection breakdowns.
+
+Determine whether each metric is:
+
+- Based on successful payments.
+- Reduced by processed refunds.
+- Based on payment dates.
+- Based on refund dates.
+- Based on invoice due dates.
+- Based on lifetime transactions.
+- Scoped to selected Academic Session.
+- Scoped to authenticated school.
+
+Do not assume that metrics with different reporting definitions must have equal totals.
+
+## 5. Independent financial examples
+
+Use existing code and safe synthetic calculations to analyze these scenarios:
+
+| Scenario | Invoice | Payment | Refund |
+|---|---:|---:|---:|
+| Fully paid, no refund | ₹10,000 | ₹10,000 | ₹0 |
+| Fully paid, partial refund | ₹10,000 | ₹10,000 | ₹2,000 |
+| Fully paid, full refund | ₹10,000 | ₹10,000 | ₹10,000 |
+| Partially paid, partial refund | ₹10,000 | ₹6,000 | ₹2,000 |
+| Refund pending | ₹10,000 | ₹10,000 | ₹2,000 pending |
+| Refund failed | ₹10,000 | ₹10,000 | ₹2,000 failed |
+| Multiple processed refunds | ₹10,000 | ₹10,000 | ₹1,000 + ₹2,000 |
+| Refund in later reporting period | ₹10,000 | ₹10,000 | ₹2,000 later |
+
+For each scenario, calculate the actual result produced by every relevant existing helper.
+
+Do not substitute textbook accounting formulas for BENIUS's implemented contract.
+
+Clearly distinguish:
+
+- Actual current result.
+- Documented expected result, if available.
+- Inconsistency.
+- Undefined business requirement.
+
+## 6. Refund status and duplication safety
+
+Check:
+
+- Which refund statuses affect balances.
+- Whether pending refunds are excluded until processed.
+- Whether failed refunds affect outstanding.
+- Whether refunds can be counted twice.
+- Whether repeated gateway callbacks can duplicate refund effects.
+- Whether multiple partial refunds are aggregated correctly.
+- Whether refunds are linked to the correct original payment and invoice.
+- Whether a refund amount can exceed the eligible refundable amount.
+- Whether ledger reports use the same processed-refund rules.
+
+Inspect safeguards and tests without executing real payment or refund operations.
+
+## 7. Academic Session and tenant isolation
+
+Verify that all relevant refund reads and calculations are scoped to:
+
+- Authenticated school ID.
+- Selected Academic Session ID.
+- Correct invoice.
+- Correct payment.
+- Correct refund association.
+
+Inspect behavior for:
+
+- Active Academic Sessions.
+- Archived Academic Sessions.
+- Students promoted between sessions.
+- Refunds processed after an Academic Session ended.
+- Payments received after an Academic Session ended.
+- Legacy or missing session IDs.
+- Foreign-school payments or refunds.
+
+Identify any potential cross-school or cross-session financial leakage.
+
+Do not modify Academic Session state.
+
+## 8. Determine the authoritative calculation
+
+Identify which existing helper or workflow is currently treated as the authoritative source for:
+
+- Invoice payable amount.
+- Successful paid amount.
+- Processed refund amount.
+- Invoice outstanding balance.
+- Invoice status.
+- Student fee balance.
+
+If multiple implementations exist, document their differences.
+
+Do not declare one implementation authoritative without evidence from the existing application architecture, documentation, or tests.
+
+## 9. Testing rules
+
+Use source inspection and existing focused tests.
+
+Synthetic in-memory calculations and mocked read-only tests are permitted without modifying application source.
+
+Do not:
+
+- Create a new PostgreSQL database.
+- Reopen the previous disposable database investigation.
+- Connect to Production.
+- Access existing Development financial records.
+- Insert synthetic records into existing databases.
+- Trigger payments or refunds.
+- Run migrations.
+- Modify test expectations to force passing results.
+
+If a test cannot be performed safely, report NOT VERIFIED.
+
+Use clear evidence labels:
+
+- SOURCE VERIFIED.
+- EXISTING TEST PASSED.
+- SYNTHETIC CALCULATION VERIFIED.
+- DATABASE VERIFIED.
+- NOT VERIFIED.
+
+## 10. Required final report
+
+### A. Overall assessment
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Existing refund business contract
+
+Explain how BENIUS currently treats processed, pending, failed, partial, and full refunds.
+
+### C. Authoritative financial calculation
+
+Identify the relevant source code and whether an authoritative helper exists.
+
+### D. Cross-module reconciliation
+
+Provide a table:
+
+| Module | Paid calculation | Refund calculation | Outstanding calculation | Consistent? |
+
+Include:
+
+- Ledger & Transactions.
+- Financial Analytics summary.
+- Financial Analytics aging drill-down.
+- Principal invoices/receipts.
+- Student Fees.
+
+### E. Synthetic scenarios
+
+Show actual results for the eight scenarios listed above.
+
+### F. Confirmed defects
+
+For each defect provide:
+
+- Severity.
+- Exact file and line numbers.
+- Current behavior.
+- Expected behavior under the existing documented contract.
+- Financial impact.
+- Smallest proposed correction.
+- Whether the correction changes financial business logic.
+
+### G. Business-rule ambiguities
+
+List every issue requiring owner confirmation.
+
+### H. Tenant and session security
+
+Document authenticated-school and selected-session enforcement.
+
+### I. Verification limitations
+
+Identify what could not be tested without a database or signed-in UI.
+
+### J. Safety confirmation
+
+Confirm:
+
+- Application source changed: NO.
+- Financial formulas changed: NO.
+- Database records modified: NO.
+- Development/Production financial data accessed: NO.
+- Payment/refund operations executed: NO.
+- Deployment performed: NO.
+- Existing workflows restarted: NO.
+
+## 11. Mandatory stop
+
+After producing the audit report, STOP.
+
+Do not implement any fixes.
+
+Do not change refund accounting.
+
+Do not change invoice status calculations.
+
+Do not modify Financial Analytics.
+
+Do not modify Ledger & Transactions.
+
+Wait for explicit owner review and approval.
