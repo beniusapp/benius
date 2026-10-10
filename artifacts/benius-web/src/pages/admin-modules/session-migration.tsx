@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, Lock,
   AlertTriangle, AlertCircle, Loader2, Info,
-  Globe, RefreshCw, GraduationCap, Shield, Archive, Copy,
+  Globe, RefreshCw, GraduationCap, Shield, Archive,
 } from "lucide-react";
 import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -545,15 +545,6 @@ export default function SessionMigrationPage() {
 
           {/* ── C. ACTION BUTTONS ─────────────────────────────────────────── */}
           <div className="pb-6 space-y-3">
-            {srcSessionId && createdSession?.id && (
-              <button
-                onClick={() => setLocation(`/session-copy-center/${createdSession.id}`)}
-                className="w-full h-10 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
-                style={{ color: "#67e8f9", border: "1px solid rgba(34,211,238,0.25)" }}
-                data-testid="button-copy-configuration">
-                <Copy className="w-4 h-4" /> Copy Configuration
-              </button>
-            )}
             <button
               onClick={() => setLocation("/admin-dashboard/exam-controller")}
               className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all hover:brightness-110 active:scale-[0.99]"

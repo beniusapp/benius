@@ -1,0 +1,106 @@
+# BENIUS — MOVE COPY CONFIGURATION BUTTON
+
+MODE: TARGETED FRONTEND-ONLY IMPLEMENTATION — DEVELOPMENT
+
+The read-only audit is complete. Implement the following approved changes.
+
+## 1. PAGE 3 — SESSION CREATION SUCCESS
+
+Remove only the "Copy Configuration" button.
+
+Keep:
+- Session Created Successfully message
+- New session name and dates
+- Actual session status
+- Proceed to Promote Students
+- Back to Academic Sessions
+
+Do not change either navigation button or the session creation process.
+
+## 2. ACADEMIC SESSIONS LIST
+
+Location:
+Admin Portal → School Setup → Academic Sessions
+
+Add a "Copy Configuration" action to each eligible target Academic Session.
+
+Requirements:
+- Use the existing page styling.
+- Open the existing Configuration Copy Center using the correct target Academic Session ID.
+- Reuse the existing Copy Center and APIs.
+- Allow the Principal to initiate copying later, not only immediately after session creation.
+- Preserve source-session selection and explicit module-by-module copying.
+- Do not automatically copy any configuration.
+- Do not allow archived or read-only target sessions to initiate copying.
+- Determine eligibility using existing backend rules; do not invent new eligibility rules.
+- Preserve school/tenant isolation and Academic Session isolation.
+- Do not modify the backend.
+
+IMPORTANT:
+If the existing Copy Center cannot safely resolve or select a source session when opened from the Academic Sessions list, STOP and report the issue rather than implementing a broken navigation path.
+
+## 3. PAGE 1 — SESSION DETAILS
+
+Keep the existing session creation form.
+
+Change the label:
+
+FROM:
+"Copy configuration from previous academic session"
+
+TO:
+"Select previous session for optional configuration copying"
+
+Update its explanatory text to make clear:
+- Selecting a previous session does not automatically copy settings.
+- The Principal can copy eligible configurations later from the Academic Sessions page.
+
+Preserve the existing source-session selection and request behavior.
+
+## 4. CRITICAL SAFETY REQUIREMENTS
+
+DO NOT:
+- Modify backend code or APIs.
+- Modify database schema or records.
+- Execute SQL writes or migrations.
+- Create, activate, archive or delete sessions.
+- Execute configuration copying.
+- Change Student Promotion functionality.
+- Change session activation rules.
+- Weaken archived-session protections.
+- Modify authentication or permissions.
+- Touch Production or Mobile.
+- Restart workflows or deploy without approval.
+
+## 5. VERIFICATION
+
+Add focused frontend tests confirming:
+
+1. Page 3 no longer displays Copy Configuration.
+2. Both existing Page 3 navigation buttons remain functional.
+3. Eligible Academic Sessions display Copy Configuration.
+4. Archived/read-only target sessions do not display an actionable copy option.
+5. The action opens the correct target session in the Copy Center.
+6. Source-session selection remains available and valid.
+7. No configuration copying happens automatically.
+8. Session creation behavior remains unchanged.
+
+Run:
+- Focused Web tests
+- Web build
+- git diff --check
+
+## 6. FINAL REPORT
+
+Report:
+- Files changed
+- Exact eligibility rules used
+- How the Copy Center obtains its source and target session IDs
+- Confirmation that Page 3 has only the two required action buttons
+- Test and build results
+- Any unresolved risks
+- Whether a Development Web restart is required
+
+STOP after implementation and verification.
+
+Wait for my approval before restarting or deploying.

@@ -757,10 +757,10 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
               </div>
               <div onClick={handleCopyPrevToggle} className="flex-1">
                 <p className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors">
-                  Copy configuration from previous academic session
+                  Select previous session for optional configuration copying
                 </p>
                 <p className="text-xs text-white/35 mt-0.5">
-                  Choose exactly which modules carry over. Safe configurations are pre-selected by default.
+                  Selecting a previous session does not copy settings automatically. You can copy eligible configurations later from the Academic Sessions page.
                 </p>
               </div>
             </label>
@@ -803,11 +803,10 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, i
                   <Info className="w-4 h-4 text-cyan-400/70 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs font-semibold text-cyan-300/80">
-                      Configuration copying is optional and can be done separately after the session is created.
+                      Configuration copying is optional and is never automatic.
                     </p>
                     <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
-                      Choose exactly which modules to copy — module by module — with live record counts
-                      from the source session. You can come back and copy more modules anytime.
+                      After creation, open Copy Configuration beside the eligible target session to choose modules individually.
                     </p>
                   </div>
                 </div>
@@ -2017,6 +2016,23 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
+                  {!isArchiveMode
+                    && !!session.status
+                    && session.status !== "archived"
+                    && !!session.copiedFromSessionId
+                    && sessions.some(source => source.id === session.copiedFromSessionId)
+                    && (
+                      <button
+                        type="button"
+                        onClick={() => setLocation(`/session-copy-center/${session.id}`)}
+                        className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-semibold text-cyan-300
+                          transition-all hover:brightness-110 active:scale-95"
+                        style={{ background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.25)" }}
+                        data-testid={`button-copy-configuration-${session.id}`}
+                      >
+                        <Copy className="w-3.5 h-3.5" /> Copy Configuration
+                      </button>
+                    )}
                   <button
                     onClick={() => {}}
                     className="w-8 h-8 flex items-center justify-center rounded-lg text-white/25

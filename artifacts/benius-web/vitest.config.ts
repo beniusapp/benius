@@ -18,6 +18,7 @@ export default defineConfig({
     include: [
       "src/pages/__tests__/student-dashboard-navigation.test.tsx",
       "src/pages/__tests__/session-migration-wizard.test.tsx",
+      "src/pages/__tests__/academic-sessions-copy-entry.test.tsx",
       "src/pages/__tests__/student-field-limits.test.ts",
       "src/pages/__tests__/portal-upload-limits.test.ts",
       "src/lib/__tests__/admin-session-view.test.ts",

@@ -79,14 +79,15 @@ describe("Academic Session review/create flow", () => {
     expect(screen.queryByText("Session created successfully")).not.toBeInTheDocument();
   });
 
-  it("preserves source context and opens Copy Center for the created target without copying automatically", async () => {
+  it("preserves source context and shows only the two Page 3 navigation actions without copying automatically", async () => {
     mount("/admin-dashboard/school-setup/session-migration?name=2026-2027&start=2026-04-01&end=2027-03-31&copyFrom=12");
     expect(await screen.findByText(/Copy source:/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("button-create-new-session"));
-    await screen.findByTestId("button-copy-configuration");
+    await screen.findByTestId("button-proceed-promote-students");
     expect(screen.getByText(/Status: draft/)).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("button-copy-configuration"));
-    await waitFor(() => expect(screen.getByTestId("copy-route")).toHaveTextContent("88"));
+    expect(screen.queryByTestId("button-copy-configuration")).not.toBeInTheDocument();
+    expect(screen.getByTestId("button-proceed-promote-students")).toBeInTheDocument();
+    expect(screen.getByTestId("button-go-to-sessions")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("copy-modules"))).toBe(false);
   });
 
