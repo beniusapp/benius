@@ -523,6 +523,7 @@ interface CreateModalProps {
   onClose:      () => void;
   onNext:       (payload: CreatePayload) => void;
   isSubmitting?: boolean;
+  initialValues?: Partial<CreatePayload>;
 }
 export interface CreatePayload {
   sessionName:          string;
@@ -536,16 +537,16 @@ export interface CreatePayload {
   copiedModules:        string | null;
 }
 
-function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false }: CreateModalProps) {
+function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false, initialValues }: CreateModalProps) {
 
   // ── Section 1: Basic info ────────────────────────────────────────────────
-  const [name,      setName]      = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate,   setEndDate]   = useState("");
+  const [name,      setName]      = useState(initialValues?.sessionName ?? "");
+  const [startDate, setStartDate] = useState(initialValues?.startDate ?? "");
+  const [endDate,   setEndDate]   = useState(initialValues?.endDate ?? "");
 
   // ── Section 2: Copy previous session ─────────────────────────────────────
-  const [copyPrev,     setCopyPrev]     = useState(false);
-  const [copiedFromId, setCopiedFromId] = useState<number | null>(null);
+  const [copyPrev,     setCopyPrev]     = useState(!!initialValues?.copiedFromSessionId);
+  const [copiedFromId, setCopiedFromId] = useState<number | null>(initialValues?.copiedFromSessionId ?? null);
 
   // ── Validation ───────────────────────────────────────────────────────────
   const trimName = name.trim();
@@ -802,7 +803,7 @@ function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false }:
                   <Info className="w-4 h-4 text-cyan-400/70 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs font-semibold text-cyan-300/80">
-                      You'll be taken to the Configuration Copy Center after creation
+                      Configuration copying is optional and can be done separately after the session is created.
                     </p>
                     <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
                       Choose exactly which modules to copy — module by module — with live record counts
@@ -1819,7 +1820,15 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
   const [, setLocation] = useLocation();
   const { setSelectedSession } = useSessionView();
 
-  const [showCreate,     setShowCreate]     = useState(false);
+  const createParams = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  const restoreCreate = createParams.get("restoreCreate") === "1";
+  const restoredValues: Partial<CreatePayload> = {
+    sessionName: createParams.get("name") ?? "",
+    startDate: createParams.get("start") ?? "",
+    endDate: createParams.get("end") ?? "",
+    copiedFromSessionId: Number(createParams.get("copyFrom")) || null,
+  };
+  const [showCreate,     setShowCreate]     = useState(restoreCreate);
   const [rolloverTarget, setRolloverTarget] = useState<AcademicSession | null>(null);
   const [deleteTarget,   setDeleteTarget]   = useState<AcademicSession | null>(null);
 
@@ -1831,25 +1840,6 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
       if (!r.ok) throw new Error("Failed to load sessions");
       return r.json();
     },
-  });
-
-  // ── Create mutation ───────────────────────────────────────────────────────
-  const createMut = useMutation({
-    mutationFn: async (payload: CreatePayload) => {
-      const r = await apiRequest("POST", "/api/admin/academic-sessions", payload);
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.message || "Failed to create session");
-      }
-      return r.json() as Promise<AcademicSession>;
-    },
-    onSuccess: (session) => {
-      setShowCreate(false);
-      if (session.isActive) setSelectedSession(session);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
-      toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   // ── Activate mutation ─────────────────────────────────────────────────────
@@ -2075,21 +2065,20 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
       {showCreate && (
         <CreateSessionModal
           sessions={sessions}
-          onClose={() => setShowCreate(false)}
-          isSubmitting={createMut.isPending}
+          onClose={() => {
+            setShowCreate(false);
+            setLocation("/admin-dashboard/academic-sessions");
+          }}
+          initialValues={restoreCreate ? restoredValues : undefined}
           onNext={payload => {
-            if (payload.copiedFromSessionId) {
-              setShowCreate(false);
-              const q = new URLSearchParams({
-                name:     payload.sessionName,
-                start:    payload.startDate,
-                end:      payload.endDate,
-                copyFrom: String(payload.copiedFromSessionId),
-              });
-              setLocation(`/admin-dashboard/school-setup/session-migration?${q.toString()}`);
-            } else {
-              createMut.mutate(payload);
-            }
+            setShowCreate(false);
+            const q = new URLSearchParams({
+              name: payload.sessionName,
+              start: payload.startDate,
+              end: payload.endDate,
+            });
+            if (payload.copiedFromSessionId) q.set("copyFrom", String(payload.copiedFromSessionId));
+            setLocation(`/admin-dashboard/school-setup/session-migration?${q.toString()}`);
           }}
         />
       )}

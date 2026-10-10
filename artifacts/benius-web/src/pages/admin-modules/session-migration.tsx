@@ -9,13 +9,13 @@
  * Step 3 — Summary          (GLOBAL DATA preserved + SESSION DATA reset)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, Lock,
   AlertTriangle, AlertCircle, Loader2, Info,
-  Globe, RefreshCw, GraduationCap, Shield, Archive,
+  Globe, RefreshCw, GraduationCap, Shield, Archive, Copy,
 } from "lucide-react";
 import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +30,7 @@ interface Session {
   endDate: string;
   isActive: boolean;
   copiedFromSessionId: number | null;
+  status: string;
 }
 
 // ── Data constants ─────────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ const SESSION_ARCHIVED_MODULES = [
 function StepBar({ current }: { current: 1 | 2 | 3 }) {
   const steps = [
     { n: 1 as const, label: "Session Details" },
-    { n: 2 as const, label: "Reset Overview" },
+    { n: 2 as const, label: "Review & Create" },
     { n: 3 as const, label: "Summary" },
   ];
   return (
@@ -151,11 +152,14 @@ export default function SessionMigrationPage() {
   const [view,     setView]     = useState<View>("overview");
   type MigStatus = "idle" | "creating" | "complete" | "error";
   const [migStatus, setMigStatus] = useState<MigStatus>("idle");
-  const [createdId, setCreatedId] = useState<number | null>(null);
+  const [createdSession, setCreatedSession] = useState<Session | null>(null);
   const [errorMsg,  setErrorMsg]  = useState("");
+  const createInFlight = useRef(false);
 
   // ── Session creation ───────────────────────────────────────────────────────
   const createSession = useCallback(async () => {
+    if (createInFlight.current) return;
+    createInFlight.current = true;
     setMigStatus("creating");
     setErrorMsg("");
     try {
@@ -171,7 +175,7 @@ export default function SessionMigrationPage() {
         throw new Error(e.message || "Failed to create session");
       }
       const session: Session = await res.json();
-      setCreatedId(session.id);
+      setCreatedSession(session);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
       setMigStatus("complete");
       setView("summary");
@@ -179,6 +183,8 @@ export default function SessionMigrationPage() {
     } catch (e: any) {
       setErrorMsg(e.message || "Could not create session");
       setMigStatus("error");
+    } finally {
+      createInFlight.current = false;
     }
   }, [newName, newStart, newEnd, srcSessionId]);
 
@@ -264,7 +270,11 @@ export default function SessionMigrationPage() {
   if (view === "overview") {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
-        <PageHeader onBack={() => setLocation("/admin-dashboard/academic-sessions")} />
+        <PageHeader onBack={() => {
+          const q = new URLSearchParams({ restoreCreate: "1", name: newName, start: newStart, end: newEnd });
+          if (srcSessionId) q.set("copyFrom", String(srcSessionId));
+          setLocation(`/admin-dashboard/academic-sessions?${q.toString()}`);
+        }} />
 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
@@ -274,15 +284,21 @@ export default function SessionMigrationPage() {
 
             {/* Page title */}
             <div className="space-y-1">
-              <h2 className="text-base font-black text-white/90">Session-Based Reset Configuration</h2>
+              <h2 className="text-base font-black text-white/90">Review New Academic Session</h2>
               <p className="text-[11px] text-white/40 leading-relaxed">
-                When you create a new session, the following modules reset automatically.
-                Global data is never touched — it exists independently of any session.
+                Previous academic records remain preserved. Configuration copying is optional and can be done separately after creation.
               </p>
             </div>
 
+            <section className="space-y-2 rounded-xl p-4"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              {srcSessionId && <p className="text-xs text-white/60"><strong>Copy source:</strong> {srcSession?.sessionName ?? `Session #${srcSessionId}`}</p>}
+              <p className="text-sm font-semibold text-white">{newName}</p>
+              <p className="text-xs text-white/50">{fmtDate(newStart)} – {fmtDate(newEnd)}</p>
+            </section>
+
             {/* ── A. SESSION-ARCHIVED MODULES ───────────────────────────── */}
-            <section className="space-y-3">
+            <section hidden className="space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#22d3ee,#6366f1)" }} />
                 <h3 className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">Session-Archived Modules</h3>
@@ -323,7 +339,7 @@ export default function SessionMigrationPage() {
 
 
             {/* ── B. GLOBAL DATA — NEVER RESETS ──────────────────────────── */}
-            <section className="space-y-3">
+            <section hidden className="space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }} />
                 <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">Global Data</h3>
@@ -371,7 +387,11 @@ export default function SessionMigrationPage() {
             <div className="pb-6 space-y-3">
               <div className="flex gap-3">
                 <button
-                  onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+                  onClick={() => {
+                    const q = new URLSearchParams({ restoreCreate: "1", name: newName, start: newStart, end: newEnd });
+                    if (srcSessionId) q.set("copyFrom", String(srcSessionId));
+                    setLocation(`/admin-dashboard/academic-sessions?${q.toString()}`);
+                  }}
                   className="flex-1 h-12 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/6"
                   style={{ border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.50)" }}
                   data-testid="button-step2-previous">
@@ -414,7 +434,7 @@ export default function SessionMigrationPage() {
         onBack={() => {
           setView("overview");
           setMigStatus("idle");
-          setCreatedId(null);
+          setCreatedSession(null);
           setErrorMsg("");
         }}
         backDisabled={migStatus === "creating"}
@@ -433,15 +453,14 @@ export default function SessionMigrationPage() {
             <div className="flex-1">
               <p className="text-sm font-bold text-emerald-300">Session created successfully</p>
               <p className="text-[10px] text-white/40 mt-0.5">
-                "{newName}" is saved as a Draft
-                {createdId ? ` (ID #${createdId})` : ""}
-                {" "}· Activate it when you're ready to go live
+                "{createdSession?.sessionName ?? newName}" · {fmtDate(createdSession?.startDate ?? newStart)} – {fmtDate(createdSession?.endDate ?? newEnd)}
+                {" "}· Status: {createdSession?.status ?? (createdSession?.isActive ? "active" : "unavailable")}
               </p>
             </div>
           </div>
 
           {/* ── A. GLOBAL DATA — NOT RESET ────────────────────────────────── */}
-          <section className="space-y-3">
+          <section hidden className="space-y-3">
             {/* Section header badge */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
               style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.22)" }}>
@@ -488,7 +507,7 @@ export default function SessionMigrationPage() {
           </section>
 
           {/* ── B. SESSION DATA — RESET ───────────────────────────────────── */}
-          <section className="space-y-3">
+          <section hidden className="space-y-3">
             {/* Section header badge */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
               style={{ background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.20)" }}>
@@ -526,6 +545,15 @@ export default function SessionMigrationPage() {
 
           {/* ── C. ACTION BUTTONS ─────────────────────────────────────────── */}
           <div className="pb-6 space-y-3">
+            {srcSessionId && createdSession?.id && (
+              <button
+                onClick={() => setLocation(`/session-copy-center/${createdSession.id}`)}
+                className="w-full h-10 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+                style={{ color: "#67e8f9", border: "1px solid rgba(34,211,238,0.25)" }}
+                data-testid="button-copy-configuration">
+                <Copy className="w-4 h-4" /> Copy Configuration
+              </button>
+            )}
             <button
               onClick={() => setLocation("/admin-dashboard/exam-controller")}
               className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all hover:brightness-110 active:scale-[0.99]"
@@ -546,13 +574,9 @@ export default function SessionMigrationPage() {
               data-testid="button-go-to-sessions">
               Back to Academic Sessions
             </button>
-            <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
-              style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.14)", color: "rgba(196,181,253,0.60)" }}>
-              <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#a78bfa" }} />
-              <span>
-                The session is saved as a <strong>Draft</strong>. Activate it from the Sessions page when you are ready to make it live.
-                Use <strong>Exam Controller → Promotion Wizard</strong> to advance students into the new session.
-              </span>
+            <div className="px-3 py-2.5 rounded-xl text-xs text-white/45"
+              style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.14)" }}>
+              Previous Academic Session records remain preserved.
             </div>
           </div>
 

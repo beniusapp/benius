@@ -1,0 +1,170 @@
+# BENIUS — SIMPLIFY ACADEMIC SESSION CREATION WIZARD
+
+MODE: IMPLEMENT TARGETED FRONTEND-ONLY CHANGES IN DEVELOPMENT.
+
+The read-only audit is complete. I approve the following UI simplification.
+
+LOCATION:
+Admin Portal → School Setup → Academic Sessions → New Session
+
+OBJECTIVE:
+Keep the existing three-page Academic Session creation workflow, but make it simple and understandable for school Principals.
+
+## PAGE 1 — SESSION DETAILS
+
+Preserve:
+- Session Name
+- Start Date
+- End Date
+- Existing date and name validation
+- Copy configuration checkbox
+- Copy From Session dropdown
+- Cancel and Next actions
+
+When the Principal clicks Next:
+- Validate the entered details.
+- Navigate to Page 2 (Review & Create).
+- Do NOT create the session yet, regardless of whether a source session was selected.
+- Preserve all form values.
+
+Replace the misleading message promising automatic Configuration Copy Center navigation with accurate wording explaining that configuration copying is a separate optional action after session creation.
+
+## PAGE 2 — REVIEW & CREATE
+
+Keep the existing Session Migration Wizard styling.
+
+Display only:
+- Heading: Review New Academic Session
+- Source session, if selected
+- New session name
+- New session start and end dates
+- A short reassurance that previous academic records remain preserved
+
+HIDE:
+- Session-Based Reset Configuration
+- All 11 Session-Archived Modules
+- All 7 Global Frameworks
+- Technical descriptions about database resets, archived records and internal session management
+
+PRESERVE BOTH BUTTONS:
+
+1. Previous
+   - Return to Page 1 with all entered details intact.
+   - Do not create or modify any session.
+
+2. Create New Session
+   - Call the EXISTING session-creation API.
+   - Create the session only once.
+   - Preserve the existing request contract and backend behavior.
+   - Disable duplicate submission while the request is pending.
+   - Show existing API validation errors clearly.
+   - On success, navigate to Page 3 with the actual created session ID and status.
+
+Do not change the backend session-creation endpoint.
+
+## PAGE 3 — SUCCESS SUMMARY
+
+Show a clean confirmation screen containing:
+- Session Created Successfully
+- Created session name
+- Start and end dates
+- Actual status returned by the backend
+
+IMPORTANT:
+Do not always display Draft. The existing backend may automatically activate a school's first Academic Session.
+
+HIDE:
+- Global Data — Not Reset technical lists
+- Session-Archived Data technical lists
+- All detailed archived/global module explanations
+
+PRESERVE THESE TWO BUTTONS:
+
+1. Proceed to Promote Students
+   - Keep navigation to the existing Student Promotion Wizard.
+   - Do not automatically promote students.
+   - Preserve the Promotion Wizard's explicit target-session selection and validation.
+   - Do not change promotion rules or backend operations.
+
+2. Back to Academic Sessions
+   - Return to the existing Academic Sessions page.
+   - Preserve existing navigation behavior.
+
+## CONFIGURATION COPY CENTER
+
+The audit confirmed that selecting a source session does not automatically copy configurations.
+
+Therefore:
+- Do not claim that configurations were copied during session creation.
+- Do not automatically execute any copy operation.
+- Preserve the existing Configuration Copy Center and its APIs.
+- When a source session was selected, provide a clear optional "Copy Configuration" action on the success page.
+- Open the existing Copy Center with the correct newly created target session ID.
+- Preserve the selected source session where the existing Copy Center supports it.
+- Keep module selection and copying explicit.
+- Do not alter which modules are eligible for copying.
+
+## IMPORTANT NAVIGATION SAFETY
+
+- Preserve form values when moving between Page 1 and Page 2.
+- Ensure creation occurs only after Create New Session is clicked.
+- Avoid duplicate API submissions.
+- Do not show a success state before the server confirms creation.
+- If the Principal refreshes or leaves the wizard, do not silently create another session.
+- Do not change existing academic-session activation rules.
+
+## STRICT BACKEND AND DATA PROTECTION
+
+DO NOT CHANGE:
+- API-server code or database schema.
+- Existing academic records.
+- Archived-session read-only protection.
+- Multi-tenant school isolation.
+- Academic Session ID isolation.
+- Global data.
+- Configuration-copy backend.
+- Student Promotion backend.
+- Authentication or permissions.
+- Any unrelated modules.
+
+No SQL writes, migrations, manual session creation, or data cleanup.
+
+## TESTING
+
+Add or update focused frontend tests verifying:
+
+1. Page 1 Next navigates to Page 2 without creating a session.
+2. Both source-selected and no-source flows use the same review step.
+3. Previous preserves entered details.
+4. Create New Session calls the existing API exactly once per submission.
+5. Failed creation does not display success.
+6. Page 3 displays the actual server-confirmed session status.
+7. The technical lists are absent from Pages 2 and 3.
+8. Both required Page 3 buttons remain functional.
+9. Optional Copy Configuration opens the correct target session.
+10. No configuration copying or student promotion happens automatically.
+
+Run focused tests, Web build and git diff --check.
+
+## OPERATIONAL SAFETY
+
+- Development only.
+- Frontend changes and focused tests only.
+- No Production or Mobile changes.
+- No API restart.
+- No deployment or publishing.
+- No environment variable changes.
+- Do not restart workflows without separate approval.
+
+## FINAL REPORT
+
+Provide:
+1. Exact files changed.
+2. Page 1, Page 2 and Page 3 changes.
+3. Confirmation that backend behavior is unchanged.
+4. Confirmation that both success-page buttons work.
+5. Configuration Copy Center navigation behavior.
+6. Tests and build results.
+7. Whether a Development Web restart is required.
+
+STOP AFTER IMPLEMENTATION AND VERIFICATION. WAIT FOR APPROVAL BEFORE ANY RESTART OR DEPLOYMENT.
