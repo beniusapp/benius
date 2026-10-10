@@ -1,0 +1,470 @@
+# BENIUS — STAGE FA-R9A
+## INDEPENDENT FINANCIAL VERIFICATION + THREE APPROVED SAFE CORRECTIONS
+
+### IMPLEMENTATION AUTHORIZED ONLY FOR THREE SPECIFIC DEFECTS
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+FA-R8A discovered the complete Financial Analytics feature inventory.
+
+FA-R8B identified three confirmed defects and insufficient independent test coverage for the main Financial Analytics calculation service.
+
+The owner authorizes:
+
+**PART A — Independent, non-destructive Financial Analytics calculation tests.**
+
+**PART B — Corrections to exactly three confirmed defects.**
+
+No other implementation is authorized.
+
+---
+
+## 1. NON-NEGOTIABLE RULES
+
+DO NOT change:
+
+- Net Collected formula.
+- Collection Efficiency formula.
+- Gross Collected formula.
+- Due This Period formula.
+- Outstanding formula.
+- Overdue Amount formula.
+- Online/Offline Collection formula.
+- Existing refund accounting rules.
+- Razorpay integrations.
+- Payment processing.
+- Refund processing.
+- Invoice generation.
+- Receipt generation.
+- Late-fee business rules.
+- Stored invoice statuses.
+- Historical enrollment records.
+- Academic Session records.
+- Database schema.
+- Existing financial records.
+- Existing payment/refund records.
+- Student Fees business logic.
+- Ledger & Transactions business logic.
+- Mobile application.
+
+Do not change date-filter semantics, session boundary rules, reminder permissions, or the aging 200-row limit.
+
+Do not deploy, restart workflows, create PostgreSQL clusters, or access Development/Production financial records directly.
+
+Do not execute payment, refund, or reminder actions.
+
+All business/display dates must continue using Asia/Kolkata (IST).
+
+---
+
+# PART A — INDEPENDENT FINANCIAL CALCULATION VERIFICATION
+
+## 2. Establish independent expected results
+
+Before modifying application code:
+
+1. Identify the Financial Analytics calculation service and its query dependencies.
+2. Identify existing test infrastructure.
+3. Construct synthetic invoice, payment, refund, enrollment, and session datasets.
+4. Independently calculate the expected financial values.
+5. Record the expected values before executing the production calculation code.
+
+Do not use production calculation helpers to generate expected answers.
+
+Do not copy the implementation formula into a test without independently checking the intended existing contract.
+
+Use deterministic test dates, amounts, and session IDs.
+
+Prefer integer paise for independent arithmetic, converting to displayed rupees only at the reporting boundary.
+
+Do not access a real financial database.
+
+If the actual calculation service cannot be exercised without a database, use safe existing mocking facilities where possible.
+
+If service-level execution is not possible, report NOT VERIFIED rather than presenting source inspection as an independent test.
+
+## 3. Test all eight Executive Summary metrics
+
+Verify:
+
+1. Due This Period.
+2. Gross Collected.
+3. Net Collected.
+4. Outstanding.
+5. Collection Efficiency.
+6. Online Collection.
+7. Offline Collection.
+8. Overdue Amount.
+
+Use synthetic scenarios including:
+
+- No invoices.
+- Unpaid invoices.
+- Fully paid invoices.
+- Partially paid invoices.
+- Multiple payments.
+- Processed partial refunds.
+- Processed full refunds.
+- Pending refunds.
+- Failed refunds.
+- Multiple processed refunds.
+- Late fees.
+- Fractional rupees.
+- Payments after Academic Session end.
+- Refunds after Academic Session end.
+- Payments outside the selected reporting period.
+- Invoices due outside the selected reporting period.
+
+The existing Net Collected = Gross Collected behavior must be preserved and explicitly tested.
+
+The existing Collection Efficiency formula must be preserved and explicitly tested, including values above 100%.
+
+Do not change formulas if tests expose a business-definition ambiguity.
+
+Report the ambiguity separately.
+
+## 4. Test Academic Session isolation
+
+Create synthetic data for:
+
+- School A.
+- School B.
+- Active Academic Session.
+- Archived Academic Session A.
+- Archived Academic Session B.
+- Students promoted between sessions.
+- Payments received after session end.
+- Processed refunds recorded after session end.
+
+Verify that every Financial Analytics calculation uses only the authenticated school's selected Academic Session.
+
+Check that:
+
+- School B records never contribute to School A.
+- Archived Session A records never contribute to Archived Session B.
+- Active-session invoices do not enter archived reports.
+- Payments follow their invoice Academic Session.
+- Refunds follow their invoice Academic Session.
+- Historical class attribution uses the exact invoice-session enrollment.
+- Missing or ambiguous historical placement does not fall back to current placement.
+
+Verify both SQL scoping and calculated outputs where possible.
+
+## 5. Test date filters and IST boundaries
+
+Independently verify:
+
+- Today.
+- This Week.
+- This Month.
+- Academic Year.
+- Custom range.
+- Inclusive start/end dates.
+- Invalid dates.
+- Reversed dates.
+- Five-year limit.
+- IST midnight.
+- Week boundaries.
+- Month boundaries.
+- Session boundaries.
+- Comparison periods.
+
+Preserve existing behavior for ranges extending outside Academic Session dates.
+
+Do not clip, reject, or reinterpret these ranges.
+
+## 6. Test all discovered breakdowns
+
+Independently test:
+
+### Collection Trend
+
+- Due-date demand.
+- Received-date collections.
+- Hourly/daily/monthly grouping.
+- Empty buckets.
+- IST handling.
+- Backdated or delayed payments.
+
+Report any `created_at` versus `received_date` inconsistency without changing it.
+
+### Payment Channels and Split
+
+- Online payments.
+- Offline payments.
+- Unknown methods.
+- Payment counts.
+- Average amounts.
+- Payment attempt lifecycle counts.
+- Channel percentages.
+- Online + Offline = Gross Collected.
+
+### Class Performance
+
+- Historical enrollment.
+- Promoted students.
+- Missing placement.
+- Ambiguous placement.
+- Billed totals.
+- Collected totals.
+- Outstanding totals.
+
+### Fee Categories
+
+- Fee-type grouping.
+- Billed amounts.
+- Collected amounts.
+- Outstanding amounts.
+- Refund treatment.
+
+### Receivables Aging
+
+- 1–30 days.
+- 31–60 days.
+- 61–90 days.
+- 90+ days.
+- Refund-adjusted balances.
+- Historical placement.
+- Class/fee filters.
+- Fractional rupees.
+- 200-row limitation.
+
+### Cash Denomination Coverage
+
+- Valid denominations.
+- Missing breakdown.
+- Malformed breakdown.
+- Fractional quantity.
+- Leading-zero key.
+- Negative quantity.
+- Zero quantity.
+- Multiple denominations.
+- Mismatched denomination sum.
+
+For malformed denomination inputs, first document existing behavior and then apply only the approved corrections described in Part B.
+
+Do not invent a new list of permitted denominations.
+
+## 7. Test PDF consistency
+
+Use synthetic Financial Analytics results with independently known values.
+
+Verify all eight exports:
+
+1. Complete report.
+2. Executive Summary.
+3. Collection Trend.
+4. Payment Channels.
+5. Class Performance.
+6. Fee Categories.
+7. Receivables Aging.
+8. Cash Denomination Coverage.
+
+Verify:
+
+- Correct school identity.
+- Correct Academic Session identity.
+- Correct reporting period.
+- Correct section data.
+- Correct totals.
+- Correct monetary precision.
+- Correct historical class attribution.
+- Correct PDF labels.
+- Correct empty-state behavior.
+
+Do not change PDF calculations or report structure.
+
+---
+
+# PART B — THREE APPROVED CORRECTIONS ONLY
+
+## 8. Correction 1 — Reject fractional cash quantities
+
+File:
+
+`artifacts/api-server/src/financial-analytics-data.ts`
+
+Current confirmed defect:
+
+A cash denomination quantity such as `1.9` is silently truncated to `1`.
+
+Required correction:
+
+- Accept only finite positive integer quantities.
+- Reject fractional quantities rather than truncating them.
+- Reject zero, negative, NaN, and non-finite quantities.
+- Preserve valid existing integer quantities.
+- Preserve the existing handling of malformed breakdowns and undocumented cash coverage, except for the approved invalid-quantity rejection.
+- Do not change recorded cash payment amounts.
+- Do not change Gross Collected.
+- Do not change cash payment processing or stored denomination records.
+
+Test both valid and invalid quantities.
+
+## 9. Correction 2 — Reject leading-zero denomination keys
+
+File:
+
+`artifacts/api-server/src/financial-analytics-data.ts`
+
+Current confirmed defect:
+
+A denomination key such as `"0500"` is accepted and normalized to `500`.
+
+Required correction:
+
+- Accept only canonical positive-integer denomination keys.
+- Reject `"0500"`, `"00"`, `"0"`, negative values, and malformed keys.
+- Continue accepting valid keys such as `"500"`, `"200"`, `"100"`, `"50"`, and other positive integer denominations already accepted by the application.
+- Do not introduce a new denomination allow-list.
+- Do not change recorded payment amounts.
+- Do not modify existing denomination data.
+- Do not change financial formulas.
+
+Use strict validation before numeric conversion.
+
+## 10. Correction 3 — Correct Class Performance PDF heading
+
+File:
+
+`artifacts/api-server/src/financial-analytics-pdf.ts`
+
+Current confirmed mismatch:
+
+The PDF displays:
+
+"Class / Section"
+
+But Financial Analytics Class Performance groups by Class only.
+
+Required correction:
+
+Change only the relevant PDF heading to:
+
+"Class"
+
+Do not change:
+
+- Class aggregation.
+- Historical enrollment.
+- Grouping dimensions.
+- Class totals.
+- Section records.
+- PDF calculations.
+- Other PDF headings.
+
+Verify the corrected heading using synthetic PDF text extraction.
+
+---
+
+# PART C — REGRESSION AND SAFETY
+
+## 11. Mandatory regression tests
+
+Verify:
+
+- All valid cash denomination inputs still work.
+- Invalid quantities no longer contribute to documented denomination totals.
+- Leading-zero denomination keys no longer contribute to documented totals.
+- Cash receipt amounts remain unchanged.
+- Gross Collected remains unchanged.
+- Online/Offline Collection remains unchanged.
+- No-refund balances remain unchanged.
+- Processed-refund balances remain unchanged.
+- Net Collected remains unchanged.
+- Collection Efficiency remains unchanged.
+- Class Performance values remain unchanged.
+- Historical placement remains unchanged.
+- Academic Session isolation remains unchanged.
+- All eight PDF sections still render.
+- PDF Class Performance heading is corrected.
+- No existing financial records are modified.
+
+Do not weaken existing tests to achieve passing results.
+
+## 12. Build and test verification
+
+Run focused relevant tests and safe builds.
+
+Report:
+
+- Tests added.
+- Tests executed.
+- Tests passed.
+- Tests failed.
+- API build.
+- Web build.
+- TypeScript checks, if safely available.
+
+If workspace-wide TypeScript checks have existing errors, distinguish them from errors introduced by FA-R9A.
+
+Do not perform unrelated TypeScript cleanup.
+
+## 13. Required final report
+
+### A. Overall verdict
+
+PASS / PARTIAL PASS / NEEDS CHANGES / BLOCKED.
+
+### B. Exact changed files
+
+List every modified and newly created file.
+
+### C. Independent calculation verification
+
+| Feature | Independent expected result | Actual service result | Evidence | Verdict |
+
+Include all eight Executive Summary metrics and every discovered breakdown.
+
+### D. Academic Session isolation
+
+Report Active, Archived, cross-school, cross-session, and historical-enrollment test results.
+
+### E. Date-filter verification
+
+Report each filter and boundary.
+
+### F. Cash validation corrections
+
+Show before/after behavior for fractional quantities and leading-zero keys.
+
+### G. PDF correction
+
+Confirm the heading and all eight export checks.
+
+### H. Financial formula preservation
+
+Explicitly confirm that Net Collected, Collection Efficiency, and every other financial formula remain unchanged.
+
+### I. Coverage limitations
+
+Identify any service/route, signed-in UI, or database reconciliation scenario that remains unverified.
+
+### J. Safety confirmation
+
+Confirm:
+
+- Core financial formulas changed: NO.
+- Payment/refund processing changed: NO.
+- Financial records changed: NO.
+- Database schema changed: NO.
+- Database accessed: NO.
+- Academic Session records changed: NO.
+- Migrations: NO.
+- Deployment: NO.
+- Workflow restarts: NO.
+- Reminders sent: NO.
+
+## 14. Mandatory stop
+
+After implementing the three authorized corrections and completing safe independent verification, STOP.
+
+Do not fix any additional defects discovered.
+
+Do not modify Net Collected or Collection Efficiency.
+
+Do not change Academic Session behavior.
+
+Do not modify unrelated modules.
+
+Wait for owner review.
