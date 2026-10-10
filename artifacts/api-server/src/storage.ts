@@ -6886,7 +6886,9 @@ export class DatabaseStorage {
   async getAuditLogsBySchool(schoolId: number, limit = 100, sessionId?: number | null): Promise<AuditLog[]> {
     const conditions: any[] = [eq(auditLogs.schoolId, schoolId)];
     if (sessionId != null) conditions.push(eq(auditLogs.sessionId, sessionId));
-    return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.createdAt)).limit(limit);
+    return db.select().from(auditLogs).where(and(...conditions))
+      .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+      .limit(limit);
   }
 
   // ===== STUDENT LEAVES FOR ADMIN (forwarded_to_admin only — teacher tier stays hidden) =====

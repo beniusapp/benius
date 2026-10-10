@@ -1,0 +1,76 @@
+BENIUS — PRINCIPAL PORTAL → AUDIT LOGS
+
+STAGE AL-R2: MINIMAL FUNCTIONAL IMPROVEMENTS
+
+The targeted read-only Audit Logs audit is complete.
+
+Implement only the following four improvements.
+
+1. ACCURATE PAGE DESCRIPTION
+
+Replace the misleading claim that the page provides a complete, immutable history of all Admin and Teacher actions.
+
+Use accurate wording such as:
+"View recorded school activities for the selected Academic Session."
+
+Do not imply complete event coverage or database-level immutability.
+
+2. ACTOR IDENTIFICATION
+
+Display the existing actor identifier (actionBy) alongside the recorded role.
+
+Use the existing stored data. Do not create new identity fields or perform cross-school user lookups.
+
+Handle missing actor identifiers gracefully.
+
+3. API ERROR HANDLING
+
+Distinguish between:
+- Successfully loaded empty audit history.
+- Permission denied.
+- API/server error.
+- Loading state.
+
+Do not show "No audit events recorded" when the request failed.
+
+Preserve existing school and Academic Session filtering.
+
+4. DETERMINISTIC ORDERING
+
+Keep newest-first sorting.
+
+When timestamps are equal, use a stable secondary ordering field from the existing schema.
+
+Do not change or rewrite stored audit records.
+
+FOCUSED TESTS
+
+Add safe, isolated tests for:
+- Correct page description.
+- Actor identifier display.
+- Empty versus error states.
+- Stable event ordering.
+- Existing permission and cross-school restrictions.
+- Selected Academic Session behavior.
+
+STRICT RULES
+
+- Development source changes only.
+- No database migrations.
+- No changes to historical audit records.
+- Do not change audit event writers or financial/security logging behavior.
+- Do not modify authentication or authorization rules.
+- Do not change External Portal, Reminders, Fee Structures, or other modules.
+- Do not restart services, deploy, or publish.
+- Do not work on Mobile.
+- Do not run tests that write to a live database.
+
+REPORT
+
+A. Files changed.
+B. Improvements completed.
+C. Focused test results.
+D. Build results.
+E. Remaining limitations.
+
+Do not perform another broad audit or start additional implementation stages.
