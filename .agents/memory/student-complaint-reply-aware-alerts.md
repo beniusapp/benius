@@ -7,4 +7,4 @@ The Student Dashboard Complaints dot represents unread Teacher-to-Student compla
 
 **Why:** the product requires a reply to a previously read Complaint to become unread again, which a once-per-Complaint receipt cannot represent.
 
-**How to apply:** use a persisted per-Complaint qualifying-note read cursor and only advance it to activity the Student successfully loaded. Keep the feature gated until the migration and legacy receipt interpretation are safely resolved; do not guess across `TIMESTAMP WITHOUT TIME ZONE` and `TIMESTAMPTZ`.
+**How to apply:** use a persisted per-Complaint qualifying-note read cursor and only advance it to activity the Student successfully loaded. Keep the feature gated until a reliable baseline for legacy receipts is proven; the owner chose to pause rather than risk hiding newer replies or re-alerting on every previously read complaint. Do not guess across `TIMESTAMP WITHOUT TIME ZONE` and `TIMESTAMPTZ`.
