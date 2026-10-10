@@ -21,3 +21,9 @@ timeoutMs = 180000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.development]
+BENIUS_STUDENT_COMPLAINT_READ_RECEIPTS_ENABLED = "true"
+BENIUS_STUDENT_COMPLAINT_READ_RECEIPTS_MIGRATION_APPLIED = "true"
