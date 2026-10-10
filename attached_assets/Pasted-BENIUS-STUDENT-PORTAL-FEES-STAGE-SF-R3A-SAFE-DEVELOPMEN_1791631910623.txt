@@ -1,0 +1,58 @@
+BENIUS — STUDENT PORTAL → FEES
+
+STAGE SF-R3A: SAFE DEVELOPMENT STARTUP CONTROL
+
+The Student Fees corrections have passed 10 focused tests and API/Web builds.
+
+The Development API restart was correctly stopped because startup invokes runOverdueFeeCheck(), which calls storage.markOverdueFeeRecords() and can modify invoice statuses.
+
+TASK:
+
+Implement the smallest Development-only safeguard to prevent automatic overdue-fee status updates during startup and scheduled processing.
+
+REQUIREMENTS:
+
+1. Introduce a clearly named Development safety setting, such as BENIUS_DEV_OVERDUE_CHECK_DISABLED.
+
+2. In NODE_ENV=development:
+   - When unset, overdue-fee processing must be disabled by default.
+   - When true, processing remains disabled.
+   - Only explicit false enables automatic overdue-fee processing.
+
+3. Apply the safeguard to every automatic startup and scheduled invocation of runOverdueFeeCheck().
+
+4. Ensure disabled processing does not call storage.markOverdueFeeRecords() or write invoice statuses.
+
+5. Preserve existing Production behavior exactly.
+
+6. Do not change the overdue-fee calculation, payment processing, invoice statuses, or financial formulas.
+
+7. Preserve the existing BENIUS_DEV_REMINDERS_DISABLED safety control.
+
+8. Add focused, side-effect-free tests proving the Development safeguard blocks automatic overdue processing.
+
+STRICT RULES:
+
+- Development source changes only.
+- Do not restart the API yet.
+- Do not modify database records.
+- Do not execute overdue-fee processing.
+- Do not send reminders or notifications.
+- Do not create payments, invoices, or refunds.
+- Do not change Production configuration.
+- Do not deploy or publish.
+- Do not work on Mobile.
+- Do not perform another broad audit.
+
+REPORT:
+
+A. Files changed.
+B. Development safety control implemented.
+C. Startup and scheduled processing paths protected.
+D. Test and build results.
+E. Whether a Development-only restart is now safe.
+
+IMPORTANT:
+Do not assume this control alone makes startup safe. Check for other automatic startup tasks that could modify data or contact external services. If any remain, report them as blockers rather than running them.
+
+STOP after reporting. Wait for owner approval before restarting.

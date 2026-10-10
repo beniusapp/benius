@@ -11,6 +11,10 @@ import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 import { formatTimeIST, SCHOOL_TIME_ZONE } from "@shared/ist-time";
 import { isReminderDeliveryEnabled } from "./reminder-safety";
+import {
+  isAutomaticOverdueFeeProcessingEnabled,
+  runAutomaticOverdueFeeWork,
+} from "./overdue-fee-safety";
 import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 import { enforceSessionRevocation } from "./session-revocation";
@@ -1414,7 +1418,9 @@ app.use((req, res, next) => {
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 Asia/Kolkata every night. Marks all "Due" fee records whose
   // due_date has passed as "Overdue" and writes an audit log entry for each change.
-  cron.schedule("0 1 * * *", async () => {
+  const automaticOverdueProcessingEnabled = isAutomaticOverdueFeeProcessingEnabled();
+  if (automaticOverdueProcessingEnabled) {
+    cron.schedule("0 1 * * *", async () => {
     log("Nightly overdue-fee sweep starting…", "cron");
     try {
       const allSchools = await storage.getSchools();
@@ -1459,7 +1465,10 @@ app.use((req, res, next) => {
     } catch (err) {
       log(`Overdue sweep error: ${String(err)}`, "cron");
     }
-  }, { timezone: SCHOOL_TIME_ZONE });
+    }, { timezone: SCHOOL_TIME_ZONE });
+  } else {
+    log("Development overdue-fee safety mode enabled; nightly processing is disabled.", "cron");
+  }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -1499,13 +1508,19 @@ app.use((req, res, next) => {
   // Marks any "Due" fee record whose due_date is in the past as "Overdue".
   // Runs once on startup (catches records missed during downtime) then every 24 h.
   async function runOverdueFeeCheck() {
-    try {
-      const flagged = await storage.markOverdueFeeRecords();
-      if (flagged > 0) log(`[fees] overdue sweep: ${flagged} record(s) marked Overdue`);
-    } catch (e) {
-      console.error("[fees] overdue sweep failed:", e);
-    }
+    await runAutomaticOverdueFeeWork(async () => {
+      try {
+        const flagged = await storage.markOverdueFeeRecords();
+        if (flagged > 0) log(`[fees] overdue sweep: ${flagged} record(s) marked Overdue`);
+      } catch (e) {
+        console.error("[fees] overdue sweep failed:", e);
+      }
+    });
   }
-  runOverdueFeeCheck();
-  setInterval(runOverdueFeeCheck, 24 * 60 * 60 * 1000);
+  if (automaticOverdueProcessingEnabled) {
+    runOverdueFeeCheck();
+    setInterval(runOverdueFeeCheck, 24 * 60 * 60 * 1000);
+  } else {
+    log("Development overdue-fee safety mode enabled; startup and daily processing are disabled.", "cron");
+  }
 })();
