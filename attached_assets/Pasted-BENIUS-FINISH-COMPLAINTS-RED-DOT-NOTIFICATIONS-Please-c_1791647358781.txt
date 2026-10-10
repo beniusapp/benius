@@ -1,0 +1,63 @@
+BENIUS — FINISH COMPLAINTS RED-DOT NOTIFICATIONS
+
+Please complete the existing reply-aware Student Complaints notification feature end-to-end.
+
+Do not restart the implementation from scratch or repeat completed audits.
+
+ALREADY COMPLETED:
+- Reply-aware backend and frontend code prepared.
+- Focused tests and builds passed.
+- Migration 020_student_complaint_reply_notifications.sql prepared.
+- Development-only feature gate prepared.
+- Existing complaint read receipts are working.
+- New reply-aware feature is not yet activated.
+
+YOUR TASK:
+
+STEP 1 — DATABASE
+- Verify the exact Development heliumdb connected to the API.
+- Confirm the new reply-event table is absent.
+- Review the isolated migration 020.
+- Ask me for approval to execute ONLY migration 020.
+- After approval, apply only that migration using the verified Development database connection.
+- Do not use drizzle push or execute unrelated migrations.
+- Verify the new table and its constraints.
+- Preserve all existing complaints and read receipts.
+
+STEP 2 — ACTIVATE
+After successful migration:
+- Verify the new feature gate and startup safety requirements.
+- Ask me for approval to enable the Development-only reply-aware feature and restart the API.
+- After approval, enable only the required flags and restart Development.
+- Confirm schema validation and HTTP 200 API health.
+
+STEP 3 — TEST
+Verify:
+1. New Teacher complaint → red dot appears.
+2. Opening the complaint after its notes load → red dot clears.
+3. New Student-visible Teacher/Admin reply → red dot reappears.
+4. Student reply → no new red dot.
+5. Resolved complaints remain in history.
+6. School, Student and Academic Session isolation.
+7. Homework, Classwork and Noticeboard remain unchanged.
+
+Use automated tests where signed-in browser access is unavailable. Clearly report anything not tested live.
+
+IMPORTANT:
+- Development only. Never touch Production.
+- No destructive SQL or historical backfill.
+- No changes to existing complaint records.
+- No unrelated code changes.
+- No deployment or publishing.
+- No Mobile work.
+- Keep startup maintenance, reminders and overdue processing disabled.
+- If a genuine safety blocker appears, stop and explain it briefly. Do not start another broad audit.
+
+FINAL REPORT:
+- Migration 020: SUCCESS/FAILED
+- Feature activation: SUCCESS/FAILED
+- API health: PASS/FAIL
+- Tests: PASS/FAIL/NOT TESTED
+- Remaining blocker, if any
+
+Please manage the technical process yourself. Ask me only for the two necessary approvals: migration execution and Development feature activation/restart.
