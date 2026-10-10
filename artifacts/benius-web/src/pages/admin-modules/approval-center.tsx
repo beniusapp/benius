@@ -248,7 +248,7 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
   const [isUploading, setIsUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { data: allItems = [], isLoading, isSuccess } = useQuery<GalleryItemWithTeacher[]>({
+  const { data: allItems = [], isLoading, isSuccess, isFetching, isError } = useQuery<GalleryItemWithTeacher[]>({
     queryKey: ["/api/admin/gallery", schoolId],
     queryFn: async () => {
       const r = await fetch(`/api/admin/gallery/${schoolId}`, { credentials: "include" });
@@ -268,9 +268,9 @@ function GalleryHub({ schoolId, adminId, sessionId, isArchiveMode = false }: { s
   const galleryPendingIds = pendingItems.map(item => item.id);
   const galleryUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds);
   useEffect(() => {
-    if (activeTab === "gallery-approval" && isSuccess && !isLoading)
+    if (activeTab === "gallery-approval" && isSuccess && !isLoading && !isFetching && !isError)
       markAdminIdsSeen({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds, galleryPendingIds);
-  }, [activeTab, isSuccess, isLoading, adminId, schoolId, galleryPendingIds.join(",")]);
+  }, [activeTab, isSuccess, isLoading, isFetching, isError, adminId, schoolId, galleryPendingIds.join(",")]);
 
   const pendingGroups = useMemo(() => {
     const map = new Map<string, GalleryItemWithTeacher[]>();
@@ -1183,7 +1183,7 @@ function ApprovalTile({
           <Icon className="w-5 h-5 text-white" />
         </div>
         {unread && <span aria-label="Unread actionable items" title="Unread actionable items" className="w-2 h-2 rounded-full bg-red-500" />}
-        {badge !== null && badge > 0 && (
+        {badge != null && badge > 0 && (
           <span
             className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0"
             style={{ background: badgeColor }}
@@ -1273,7 +1273,7 @@ export default function ApprovalCenter({ schoolId, adminId, sessionId, initialSe
     enabled: !!schoolId && showHistory && (canGallery || canEbooks),
   });
 
-  const { data: pendingEbooks = [], isLoading: ebooksLoading, isSuccess: ebooksSuccess } = useQuery<any[]>({
+  const { data: pendingEbooks = [], isLoading: ebooksLoading, isSuccess: ebooksSuccess, isFetching: ebooksFetching, isError: ebooksError } = useQuery<any[]>({
     queryKey: ["/api/library/books", schoolId, "pending"],
     queryFn: async () => {
       const r = await fetch(`/api/library/books/${schoolId}/pending`, { credentials: "include" });
@@ -1357,9 +1357,9 @@ export default function ApprovalCenter({ schoolId, adminId, sessionId, initialSe
   const galleryUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "gallery" }, galleryPendingIds);
   const ebookUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId: null, source: "ebooks" }, ebookPendingIds);
   useEffect(() => {
-    if (activeSection === "ebook" && ebookTab === "verification" && ebooksSuccess && !ebooksLoading)
+    if (activeSection === "ebook" && ebookTab === "verification" && ebooksSuccess && !ebooksLoading && !ebooksFetching && !ebooksError)
       markAdminIdsSeen({ adminId, schoolId, sessionId: null, source: "ebooks" }, ebookPendingIds, ebookPendingIds);
-  }, [activeSection, ebookTab, ebooksSuccess, ebooksLoading, adminId, schoolId, ebookPendingIds.join(",")]);
+  }, [activeSection, ebookTab, ebooksSuccess, ebooksLoading, ebooksFetching, ebooksError, adminId, schoolId, ebookPendingIds.join(",")]);
 
   const Spinner = () => (
     <div className="flex justify-center py-8">

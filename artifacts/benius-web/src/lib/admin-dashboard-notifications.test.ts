@@ -10,6 +10,16 @@ import {
   summarizeAdminNotifications,
   type AdminNotificationQueries,
 } from "./admin-dashboard-notifications";
+import { aggregateAdminUnreadParents, markAdminIdsSeen, unreadAdminIds, type AdminUnreadScope } from "./admin-dashboard-unread-state";
+
+function testStorage() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    values,
+  };
+}
 
 function ready<T>(data: T) {
   return { data, isError: false, isLoading: false };
@@ -31,7 +41,7 @@ test("seven actionable submodules count unresolved work and complaint aggregates
   q.ebooks.data = [{ id: 7, verificationStatus: "pending" }, { id: 8, verificationStatus: "verified" }];
   q.complaints.data = [
     { id: 9, status: "Pending", complaintType: "teacher-to-admin" },
-    { id: 10, status: "Investigating", complaintType: "student-to-staff" },
+    { id: 9, status: "Investigating", complaintType: "student-to-staff" },
     { id: 11, status: "Escalated", complaintType: "student-peer-report", escalatedToPrincipal: true },
     { id: 12, status: "Resolved", complaintType: "teacher-to-admin" },
   ];
@@ -83,8 +93,8 @@ test("partial and complete errors preserve known counts but never claim a comple
 
   const partial = summarizeAdminNotifications(q);
   assert.equal(partial.sources.find(s => s.id === "teacher-leave")?.count, 1);
-  assert.equal(partial.sources.find(s => s.id === "complaints")?.count, 1);
-  assert.equal(partial.sources.find(s => s.id === "complaints")?.state, "error");
+  assert.equal(partial.sources.find(s => s.id === "private-complaints")?.count, 1);
+  assert.equal(partial.sources.find(s => s.id === "private-complaints")?.state, "error");
   assert.equal(partial.sources.find(s => s.id === "ebooks")?.count, undefined);
   assert.equal(partial.total, undefined);
   assert.equal(partial.complete, false);
@@ -150,6 +160,48 @@ test("complaint status normalization counts the canonical active states and excl
   assert.equal(isUnresolvedComplaintStatus("in progress"), true);
   assert.equal(isUnresolvedComplaintStatus("Resolved"), false);
   assert.equal(isUnresolvedComplaintStatus(null), false);
+});
+
+test("browser-local seen IDs isolate Admin, School, Academic Session, and submodule; new IDs stay unread", () => {
+  const storage = testStorage();
+  const scope: AdminUnreadScope = { adminId: 3, schoolId: 8, sessionId: 2026, source: "teacher-leave" };
+  assert.deepEqual([...unreadAdminIds(scope, [11, 12], storage)], ["11", "12"]);
+  assert.equal(markAdminIdsSeen(scope, [11], [11, 12], storage), true);
+  assert.deepEqual([...unreadAdminIds(scope, [11, 12], storage)], ["12"]);
+  assert.deepEqual([...unreadAdminIds({ ...scope, source: "student-leave" }, [11, 12], storage)], ["11", "12"]);
+  assert.deepEqual([...unreadAdminIds({ ...scope, sessionId: 2027 }, [11, 12], storage)], ["11", "12"]);
+  assert.deepEqual([...unreadAdminIds({ ...scope, schoolId: 9 }, [11, 12], storage)], ["11", "12"]);
+  assert.deepEqual([...unreadAdminIds({ ...scope, adminId: 4 }, [11, 12], storage)], ["11", "12"]);
+  assert.deepEqual([...unreadAdminIds(scope, [11, 12, 13], storage)], ["12", "13"]);
+});
+
+test("gallery and e-book seen state is school-wide across Academic Sessions", () => {
+  const storage = testStorage();
+  const scope: AdminUnreadScope = { adminId: 3, schoolId: 8, sessionId: 2026, source: "gallery" };
+  assert.equal(markAdminIdsSeen(scope, [21], [21], storage), true);
+  assert.deepEqual([...unreadAdminIds({ ...scope, sessionId: 2027 }, [21], storage)], []);
+  const ebooks = { ...scope, source: "ebooks" as const };
+  assert.equal(markAdminIdsSeen(ebooks, [22], [22], storage), true);
+  assert.deepEqual([...unreadAdminIds({ ...ebooks, sessionId: 2027 }, [22], storage)], []);
+});
+
+test("parent unread indicator stays on until every relevant child is seen", () => {
+  const allSeen = {
+    teacherLeave: false, studentLeave: false, gallery: false, ebooks: false,
+    privateComplaints: false, studentGrievances: false, escalatedComplaints: false,
+  };
+  assert.deepEqual(aggregateAdminUnreadParents({ ...allSeen, studentLeave: true }), {
+    "leave-requests": true, "approval-center": false, "complaint-hub": false,
+  });
+  assert.equal(aggregateAdminUnreadParents({ ...allSeen, privateComplaints: true, studentGrievances: true })["complaint-hub"], true);
+  assert.equal(aggregateAdminUnreadParents(allSeen)["complaint-hub"], false);
+});
+
+test("malformed storage fails safely and does not hide unread records", () => {
+  const storage = testStorage();
+  const scope: AdminUnreadScope = { adminId: 3, schoolId: 8, sessionId: 2026, source: "ebooks" };
+  storage.values.set(`benius-admin-unread-v1:3:8:school:ebooks`, "{broken");
+  assert.deepEqual([...unreadAdminIds(scope, [31], storage)], ["31"]);
 });
 
 test("Support Staff do not see the cross-module Action Required aggregate", () => {

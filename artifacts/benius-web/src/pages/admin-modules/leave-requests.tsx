@@ -230,7 +230,7 @@ export default function LeaveRequests({ schoolId, adminId, sessionId, initialSec
   const canHistory      = !allowedSubs || allowedSubs.includes("leave-history");
 
   // ── Queries ──────────────────────────────────────────────────────────────────
-  const { data: leaveRequests = [], isLoading: leavesLoading, isSuccess: leavesSuccess } = useQuery<any[]>({
+  const { data: leaveRequests = [], isLoading: leavesLoading, isSuccess: leavesSuccess, isFetching: leavesFetching } = useQuery<any[]>({
     queryKey: ["/api/leave/school", schoolId, sessionId],
     queryFn: async () => {
       const r = await sessionFetchForViewSession(`/api/leave/school/${schoolId}`, sessionId);
@@ -240,7 +240,7 @@ export default function LeaveRequests({ schoolId, adminId, sessionId, initialSec
     enabled: !!schoolId && canTeacherLeave,
   });
 
-  const { data: studentLeaves = [], isLoading: sleavesLoading, isSuccess: studentLeavesSuccess } = useQuery<any[]>({
+  const { data: studentLeaves = [], isLoading: sleavesLoading, isSuccess: studentLeavesSuccess, isFetching: studentLeavesFetching } = useQuery<any[]>({
     queryKey: ["/api/student-leaves/school", schoolId, sessionId],
     queryFn: async () => {
       const r = await sessionFetchForViewSession(`/api/student-leaves/school/${schoolId}`, sessionId);
@@ -289,11 +289,11 @@ export default function LeaveRequests({ schoolId, adminId, sessionId, initialSec
   const teacherUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "teacher-leave" }, teacherPendingIds);
   const studentUnreadIds = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "student-leave" }, studentPendingIds);
   useEffect(() => {
-    if (activeSection === "teacher-leave" && canTeacherLeave && leavesSuccess)
+    if (activeSection === "teacher-leave" && canTeacherLeave && leavesSuccess && !leavesFetching)
       markAdminIdsSeen({ adminId, schoolId, sessionId, source: "teacher-leave" }, teacherPendingIds, teacherPendingIds);
-    if (activeSection === "student-leave" && canStudentLeave && studentLeavesSuccess)
+    if (activeSection === "student-leave" && canStudentLeave && studentLeavesSuccess && !studentLeavesFetching)
       markAdminIdsSeen({ adminId, schoolId, sessionId, source: "student-leave" }, studentPendingIds, studentPendingIds);
-  }, [activeSection, adminId, schoolId, sessionId, leavesSuccess, studentLeavesSuccess, teacherPendingIds.join(","), studentPendingIds.join(",")]);
+  }, [activeSection, adminId, schoolId, sessionId, leavesSuccess, leavesFetching, studentLeavesSuccess, studentLeavesFetching, teacherPendingIds.join(","), studentPendingIds.join(",")]);
   const isPending              = leaveStatusMutation.isPending || studentLeaveApproveMutation.isPending;
 
   // ── Student Leave Detail Modal ────────────────────────────────────────────────

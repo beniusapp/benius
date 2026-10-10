@@ -44,7 +44,7 @@ import {
   shouldShowAdminActionNotifications,
   summarizeAdminNotifications,
 } from "@/lib/admin-dashboard-notifications";
-import { useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
+import { aggregateAdminUnreadParents, useUnreadAdminIds } from "@/lib/admin-dashboard-unread-state";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -1897,11 +1897,15 @@ export default function AdminDashboard() {
   const unreadPrivate = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "private-complaints" }, complaintIds["private-complaints"].map(item => item.id));
   const unreadGrievances = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "student-grievances" }, complaintIds["student-grievances"].map(item => item.id));
   const unreadEscalated = useUnreadAdminIds({ adminId: notifyAdminId, schoolId: notifySchoolId, sessionId: notifySessionId, source: "escalated-complaints" }, complaintIds["escalated-complaints"].map(item => item.id));
-  const parentUnread = {
-    "leave-requests": unreadTeacher.size > 0 || unreadStudent.size > 0,
-    "approval-center": unreadGallery.size > 0 || unreadEbooks.size > 0,
-    "complaint-hub": unreadPrivate.size > 0 || unreadGrievances.size > 0 || unreadEscalated.size > 0,
-  };
+  const parentUnread = aggregateAdminUnreadParents({
+    teacherLeave: unreadTeacher.size > 0,
+    studentLeave: unreadStudent.size > 0,
+    gallery: unreadGallery.size > 0,
+    ebooks: unreadEbooks.size > 0,
+    privateComplaints: unreadPrivate.size > 0,
+    studentGrievances: unreadGrievances.size > 0,
+    escalatedComplaints: unreadEscalated.size > 0,
+  });
   const pendingNotificationCount = notificationSummary.total;
   const actionCountAnimated = useCountUp(pendingNotificationCount ?? 0);
   const notificationQueries = [

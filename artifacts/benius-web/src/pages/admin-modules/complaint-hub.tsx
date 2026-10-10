@@ -440,7 +440,7 @@ export default function ComplaintHub({ schoolId, adminId, sessionId, initialTab,
     private: "all", grievances: "all", escalated: "all",
   });
 
-  const { data: all = [], isLoading, isSuccess } = useQuery<AdminComplaint[]>({
+  const { data: all = [], isLoading, isSuccess, isFetching, isError } = useQuery<AdminComplaint[]>({
     queryKey: ["/api/complaints/school", schoolId, sessionId],
     queryFn: async () => {
       const r = await sessionFetchForViewSession(`/api/complaints/school/${schoolId}`, sessionId);
@@ -479,10 +479,10 @@ export default function ComplaintHub({ schoolId, adminId, sessionId, initialTab,
   const grievancesUnread = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "student-grievances" }, pendingIdsByTab.grievances);
   const escalatedUnread = useUnreadAdminIds({ adminId, schoolId, sessionId, source: "escalated-complaints" }, pendingIdsByTab.escalated);
   useEffect(() => {
-    if (!isSuccess || isLoading || !visibleTabs.some(tab => tab.key === activeTab)) return;
+    if (!isSuccess || isLoading || isFetching || isError || !visibleTabs.some(tab => tab.key === activeTab)) return;
     const source = activeTab === "private" ? "private-complaints" : activeTab === "grievances" ? "student-grievances" : "escalated-complaints";
     markAdminIdsSeen({ adminId, schoolId, sessionId, source }, pendingIdsByTab[activeTab], pendingIdsByTab[activeTab]);
-  }, [isSuccess, isLoading, activeTab, adminId, schoolId, sessionId, all]);
+  }, [isSuccess, isLoading, isFetching, isError, activeTab, adminId, schoolId, sessionId, all]);
   const activeConfig = TAB_CONFIG.find(t => t.key === activeTab)!;
 
   if (isLoading) {
@@ -492,6 +492,9 @@ export default function ComplaintHub({ schoolId, adminId, sessionId, initialTab,
         <p className="text-white/30 text-xs">Loading complaints…</p>
       </div>
     );
+  }
+  if (isError) {
+    return <div role="alert" className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-sm text-amber-200">Complaint counts are unavailable because the requests could not be loaded.</div>;
   }
 
   return (

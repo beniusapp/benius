@@ -4,6 +4,17 @@ export type AdminUnreadSource =
   | "teacher-leave" | "student-leave" | "gallery" | "ebooks"
   | "private-complaints" | "student-grievances" | "escalated-complaints";
 
+export function aggregateAdminUnreadParents(children: {
+  teacherLeave: boolean; studentLeave: boolean; gallery: boolean; ebooks: boolean;
+  privateComplaints: boolean; studentGrievances: boolean; escalatedComplaints: boolean;
+}) {
+  return {
+    "leave-requests": children.teacherLeave || children.studentLeave,
+    "approval-center": children.gallery || children.ebooks,
+    "complaint-hub": children.privateComplaints || children.studentGrievances || children.escalatedComplaints,
+  };
+}
+
 export interface AdminUnreadScope {
   adminId: number;
   schoolId: number;
@@ -17,7 +28,7 @@ const PREFIX = "benius-admin-unread-v1:";
 const MAX_IDS_PER_SOURCE = 20000;
 
 export function adminUnreadStorageKey(scope: AdminUnreadScope): string {
-  const session = scope.source === "gallery" || scope.source === "ebooks" ? "school" : scope.sessionId ?? "active";
+  const session = scope.source === "gallery" || scope.source === "ebooks" ? "school" : scope.sessionId ?? "none";
   return `${PREFIX}${scope.adminId}:${scope.schoolId}:${session}:${scope.source}`;
 }
 
