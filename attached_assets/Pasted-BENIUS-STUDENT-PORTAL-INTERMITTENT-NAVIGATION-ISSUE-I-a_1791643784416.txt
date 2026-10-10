@@ -1,0 +1,56 @@
+BENIUS — STUDENT PORTAL INTERMITTENT NAVIGATION ISSUE
+
+I am experiencing an intermittent navigation problem in the Student Portal.
+
+EXAMPLE:
+Student Dashboard → Complaints
+
+Sometimes when I click the Complaints card for the first time, nothing happens. I remain on the Student Dashboard.
+
+When I click the same card a second time, it opens correctly.
+
+I want every module to open reliably on the FIRST CLICK.
+
+TASK — READ-ONLY AUDIT FIRST:
+
+1. Inspect Student Dashboard module-card click handlers and navigation logic.
+
+2. Investigate why the first click sometimes fails but the second succeeds.
+
+3. Check for:
+   - Route initialization or Wouter navigation issues.
+   - Academic Session context loading or hydration.
+   - Authentication/session readiness.
+   - React Query loading or refetch behavior.
+   - Event propagation, overlapping elements, or disabled click handlers.
+   - Navigation redirects that unexpectedly return the user to the dashboard.
+   - Race conditions or asynchronous state updates.
+
+4. Inspect whether this issue affects only Complaints or potentially other Student Portal modules.
+
+5. Verify whether the recent Student Complaint read-receipt activation has any connection to this behavior. Do not assume it is the cause.
+
+6. Check whether existing route tests cover first-click navigation and browser back/forward behavior.
+
+IMPORTANT:
+- READ-ONLY investigation first.
+- Do not modify any code yet.
+- Do not change database schema or records.
+- Do not restart services.
+- Do not change feature flags.
+- Do not touch Production.
+- Do not modify Principal or Teacher Portal.
+- Do not work on Mobile.
+
+REPORT:
+1. Exact root cause, if identifiable.
+2. Affected modules.
+3. File names and relevant code locations.
+4. Recommended smallest permanent fix.
+5. Any tests required.
+
+If the root cause cannot be confirmed from code alone, explain what runtime evidence is needed.
+
+Wait for my approval before implementing changes.
+
+Keep the report concise and easy to understand.
