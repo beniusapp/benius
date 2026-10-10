@@ -1,0 +1,78 @@
+# BENIUS — FINISH FEE STRUCTURES (OPTION A)
+
+The owner has selected OPTION A: preserve all existing test data and make future Fee Structures and invoices work correctly.
+
+FS-R3 code changes are already implemented. FS-R4 reported 14 passing focused tests.
+
+Do not repeat previous audits or redesign the module.
+
+## STEP 1 — Confirm the database
+
+The owner has manually opened Replit Cloud → Development Database → public.fee_records and confirmed that fee_structure_id is missing.
+
+We must establish that this is the database used by the BENIUS Development API.
+
+Use an authorized, secure method to confirm the runtime database binding.
+
+Do not expose DATABASE_URL, passwords or credentials.
+
+If you cannot establish the connection, STOP and state the blocker. Do not guess.
+
+## STEP 2 — Prepare the database change
+
+Once the Development API database is positively identified, check whether public.fee_records.fee_structure_id exists.
+
+If absent, the intended change is:
+
+ALTER TABLE public.fee_records
+ADD COLUMN fee_structure_id integer NULL;
+
+Do not execute this statement automatically.
+
+First report that the correct Development database is confirmed and request separate owner approval to execute the statement.
+
+Do not use Drizzle push or push-force.
+
+Do not modify Production.
+
+## STEP 3 — Verify future invoice generation
+
+After the owner separately approves and the database change has been applied:
+
+1. Verify the new column exists with the expected type.
+2. Confirm new structure-generated invoices save the exact feeStructureId.
+3. Confirm editing one Fee Structure does not change invoices belonging to another structure with the same fee type.
+4. Confirm old invoices with NULL feeStructureId are excluded from automatic structure synchronization/deletion.
+5. Confirm paid, partially paid, archived and cross-school invoices remain protected.
+6. Confirm breakdown and late-fee validation works.
+
+Use synthetic tests first. Do not create actual database test records without explicit owner approval.
+
+## STRICT RULES
+
+- Preserve every existing test record.
+- No deletion or truncation.
+- No backfill.
+- No invoice amount rewriting.
+- No payment/refund modifications.
+- No financial formula changes.
+- No Academic Session changes.
+- No Mobile changes.
+- No deployment without approval.
+- No Production changes.
+
+## FINAL RESPONSE
+
+Report only:
+
+A. Development API database confirmed: YES/NO.
+
+B. fee_structure_id column status: MISSING / PRESENT / UNKNOWN.
+
+C. Ready for owner-approved ALTER TABLE: YES/NO.
+
+D. Future invoice-generation verification: PASS / PENDING / FAILED.
+
+E. Exact remaining blocker, if any.
+
+STOP. Do not propose another audit stage.
