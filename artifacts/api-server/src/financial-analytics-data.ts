@@ -43,6 +43,11 @@ import {
   addCalendarDays,
   calendarWeekday,
 } from "@shared/ist-time";
+import {
+  historicalFeePlacementJoin,
+  historicalPlacementClassDisplay,
+} from "./historical-fee-placement-sql";
+import { refundAdjustedOutstanding } from "./financial-reporting-balance";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -562,16 +567,24 @@ export async function buildFinancialAnalytics(
       fr.due_date,
       fr.status,
       fr.student_id,
-      s.class AS student_class,
+      ${historicalPlacementClassDisplay} AS student_class,
       -- lifetime successful payments for this invoice
       COALESCE((
         SELECT SUM(pr2.amount)
         FROM payment_records pr2
         WHERE pr2.fee_record_id = fr.id
           AND pr2.school_id = ${schoolId}
-      ), 0) AS lifetime_paid
+      ), 0) AS lifetime_paid,
+      COALESCE((
+        SELECT SUM(COALESCE(r.processed_amount_paise, r.requested_amount_paise)) / 100.0
+        FROM refunds r
+        WHERE r.fee_record_id = fr.id
+          AND r.school_id = ${schoolId}
+          AND r.local_status = 'processed'
+      ), 0) AS lifetime_refunded
     FROM fee_records fr
     JOIN students s ON s.id = fr.student_id AND s.school_id = ${schoolId}
+    ${historicalFeePlacementJoin}
     WHERE fr.school_id = ${schoolId}
       AND fr.session_id = ${sessionId}
       AND fr.due_date >= ${startDate}
@@ -614,12 +627,13 @@ export async function buildFinancialAnalytics(
       ) AS has_payment_attempt,
       fr.id           AS fee_record_id,
       fr.fee_type     AS fee_type,
-      s.class         AS student_class
+      ${historicalPlacementClassDisplay} AS student_class
     FROM payment_records pr
     JOIN fee_records fr ON fr.id = pr.fee_record_id
                         AND fr.school_id = ${schoolId}
                         AND fr.session_id = ${sessionId}
     JOIN students s ON s.id = pr.student_id AND s.school_id = ${schoolId}
+    ${historicalFeePlacementJoin}
     WHERE pr.school_id    = ${schoolId}
       AND pr.received_date >= ${startDate}
       AND pr.received_date <= ${endDate}
@@ -719,8 +733,9 @@ export async function buildFinancialAnalytics(
 
   for (const row of billedRows) {
     const billed        = Number(row.amount) + Number(row.late_fee_amount ?? 0);
-    const lifetimePaid  = Number(row.lifetime_paid   ?? 0);
-    const unpaid        = Math.max(0, billed - lifetimePaid);
+    const lifetimePaid = Number(row.lifetime_paid ?? 0);
+    const lifetimeRefunded = Number(row.lifetime_refunded ?? 0);
+    const unpaid = refundAdjustedOutstanding(billed, lifetimePaid, lifetimeRefunded);
 
     totalBilled      += billed;
     totalOutstanding += unpaid;

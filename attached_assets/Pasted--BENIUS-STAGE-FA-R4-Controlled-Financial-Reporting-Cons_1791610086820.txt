@@ -1,0 +1,236 @@
+# BENIUS — STAGE FA-R4
+## Controlled Financial Reporting Consistency Corrections
+### STRICT SCOPE — NO CHANGES TO CORE FINANCIAL BUSINESS LOGIC
+
+BENIUS is a multi-tenant School Management Information System in DEVELOPMENT.
+
+The owner has reviewed the FA-R1 and FA-R2 audits and wants the identified financial reporting inconsistencies resolved safely.
+
+The objective is to make financial displays consistent with EXISTING approved accounting behavior.
+
+**Do not introduce new financial rules. Do not change payment or refund processing.**
+
+## 1. Mandatory pre-implementation safety check
+
+Before changing any code:
+
+1. Review the FA-R1 and FA-R2 findings.
+2. Identify the exact read-only calculation paths requiring correction.
+3. Confirm the existing refund-service and transaction-detail calculation contracts.
+4. Identify all affected consumers and tests.
+5. Establish baseline behavior for normal payments without refunds.
+6. Confirm that every proposed change is limited to reporting/read models.
+
+If any proposed correction requires changing the core financial contract, database schema, stored invoice statuses, payment/refund records, or an unresolved business definition, STOP and ask the owner.
+
+## 2. Financial Analytics outstanding and aging
+
+Inspect:
+
+`artifacts/api-server/src/financial-analytics-data.ts`
+
+And the existing aging drill-down in:
+
+`artifacts/api-server/src/fees-routes.ts`
+
+Align the read-only outstanding and aging calculations with the established processed-refund treatment used by the existing refund service and transaction detail.
+
+Requirements:
+
+- Only processed refunds affect retained payment amounts.
+- Pending refunds must not change outstanding.
+- Failed refunds must not change outstanding.
+- Multiple processed refunds must not be counted twice.
+- No-refund calculations must remain identical to current behavior.
+- Existing invoice due-date filters must remain unchanged.
+- Existing Academic Session and authenticated-school filters must remain unchanged.
+- Existing overdue bucket definitions must remain unchanged.
+- Archived financial records must not be modified.
+
+If an archived-session reporting policy must be invented to implement the correction, STOP and report that decision separately.
+
+Do not change Gross Collected, Net Collected, or Collection Efficiency formulas in this stage.
+
+## 3. Ledger & Transactions summary
+
+Inspect:
+
+`artifacts/api-server/src/storage.ts`
+
+Correct only the confirmed refund-related outstanding discrepancy, using the established refund-aware retained-payment definition.
+
+Preserve:
+
+- Original payment amounts.
+- Gross revenue.
+- Transaction history.
+- Existing invoice status rules.
+- Existing reporting filters.
+- Academic Session isolation.
+- School isolation.
+
+The audit also identified possible late-fee omissions.
+
+Do not silently introduce a new late-fee calculation. Report any unresolved late-fee rule separately for owner approval.
+
+## 4. Student Fees summary and open-fee total
+
+Inspect:
+
+`artifacts/api-server/src/routes.ts`
+
+`artifacts/benius-web/src/pages/student-fees.tsx`
+
+Ensure that student-facing outstanding displays use the correct remaining balance after processed refunds.
+
+Requirements:
+
+- Do not replace original invoice amounts.
+- Do not alter payment history.
+- Do not alter receipt amounts.
+- Do not modify refund status.
+- Do not modify stored invoice status.
+- Preserve late-fee behavior unless an existing authoritative rule explicitly resolves it.
+- Preserve student authorization, school isolation, and Academic Session isolation.
+
+For a ₹10,000 invoice fully paid and then refunded ₹2,000, the refund-aware remaining outstanding should be ₹2,000 under the existing refund-service rule.
+
+For the same invoice without refunds, the existing displayed financial values must remain unchanged except where an independently confirmed display defect exists.
+
+## 5. Historical Class Performance
+
+Inspect the Financial Analytics Class Performance aggregation.
+
+For historical financial records, use the exact enrollment placement belonging to:
+
+- Authenticated school ID.
+- Student ID.
+- Selected fee-record Academic Session ID.
+
+Do not use the student's current Registry class when reporting an earlier Academic Session.
+
+If historical enrollment is missing or ambiguous:
+
+- Do not guess.
+- Do not use current class as a fallback.
+- Do not change the financial amount.
+- Use a clearly identified unavailable/unattributed grouping according to the existing application presentation conventions.
+
+Preserve all school-wide financial totals.
+
+Do not modify enrollment records.
+
+## 6. Academic Session switching
+
+Inspect Financial Analytics requests, aging drill-down requests, and Financial Analytics PDF export.
+
+Ensure every request uses the captured Academic Session ID associated with that request.
+
+Prevent stale responses from being displayed under a different Academic Session.
+
+For PDF exports, prevent an earlier session's export from being presented as the newly selected session's export.
+
+Preserve existing server-side school/session authorization.
+
+Do not modify Academic Session records or status.
+
+## 7. Explicitly excluded changes
+
+DO NOT MODIFY:
+
+- Refund initiation or eligibility behavior.
+- Razorpay refund processing.
+- Razorpay payment creation or verification.
+- Shared payment/refund webhooks.
+- Payment reconciliation.
+- Invoice generation or original invoice amounts.
+- Receipt generation or original receipt amounts.
+- Payment and refund database records.
+- Refund event history.
+- Invoice status projection.
+- Database schema or migrations.
+- Net Collected definition.
+- Gross Collected definition.
+- Collection Efficiency formula.
+- Existing payment-channel classification.
+- Existing fee policies or late-fee rules.
+- Any unrelated Principal, Teacher, Student, or Mobile module.
+
+Refund functionality must remain as it currently exists. Disabling it is NOT part of this stage.
+
+## 8. Mandatory regression scenarios
+
+Use safe, focused source-level or mocked tests.
+
+Verify:
+
+1. Fully paid invoice without refund.
+2. Partially paid invoice without refund.
+3. Fully paid invoice with processed partial refund.
+4. Fully paid invoice with processed full refund.
+5. Pending refund.
+6. Failed refund.
+7. Multiple processed refunds.
+8. Refund processed in a later reporting period.
+9. Active Academic Session.
+10. Archived Academic Session.
+11. Student promoted between Academic Sessions.
+12. Missing historical enrollment.
+13. Ambiguous historical enrollment.
+14. Rapid Academic Session switching.
+15. Financial Analytics PDF session correctness.
+16. Cross-school isolation.
+17. Existing payment/receipt outputs remain unchanged.
+18. No-refund financial calculations remain unchanged.
+
+For each test, state whether it is:
+
+- SOURCE VERIFIED.
+- UNIT TEST PASSED.
+- MOCKED ROUTE TEST PASSED.
+- DATABASE VERIFIED.
+- SIGNED-IN UI VERIFIED.
+- NOT VERIFIED.
+
+Do not claim database or UI verification unless actually performed.
+
+## 9. Safety restrictions
+
+- No Development or Production financial database access.
+- No new PostgreSQL clusters.
+- No migrations.
+- No payment/refund API calls to Razorpay.
+- No workflow restarts.
+- No deployment.
+- No unrelated refactoring.
+- No broad formatting changes.
+- No automatic changes outside the approved reporting scope.
+
+## 10. Required final report
+
+Provide:
+
+1. Exact files changed.
+2. Exact financial reporting defects corrected.
+3. Before-and-after synthetic examples.
+4. Confirmation that no-refund behavior is preserved.
+5. Active and Archived Session behavior.
+6. Historical Class Performance verification.
+7. Academic Session switching verification.
+8. Focused test results.
+9. Any remaining unresolved financial definitions.
+10. Confirmation that payment/refund business logic and database records were untouched.
+
+If an unresolved business rule blocks a correction, leave that part unchanged and report it.
+
+## 11. Mandatory stop
+
+After the narrowly scoped corrections and focused verification, STOP.
+
+Do not proceed to additional modules.
+
+Do not modify unrelated financial calculations.
+
+Do not deploy.
+
+Wait for owner review.

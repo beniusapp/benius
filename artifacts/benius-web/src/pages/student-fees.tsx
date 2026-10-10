@@ -1535,7 +1535,9 @@ export default function StudentFees() {
   }
 
   // ── Derived values ───────────────────────────────────────────────────────────
-  const totalDue    = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount + ((r as any).accrued_late_fee ?? 0), 0);
+  const totalDue = feeRecords
+    .filter(r => r.status !== "Paid" || Number((r as any).processed_refund_amount ?? 0) > 0)
+    .reduce((s, r) => s + ((r as any).refund_adjusted_total_due ?? r.amount + ((r as any).accrued_late_fee ?? 0)), 0);
   const totalPaid   = feeRecords.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const overdueCount = feeRecords.filter(r => r.status === "Overdue").length;
   const paidRecords = feeRecords.filter(r => r.status === "Paid");

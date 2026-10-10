@@ -10693,7 +10693,10 @@ export class DatabaseStorage {
     // Outstanding = the remaining amount on unpaid invoices.
     const sessionCond = sessionId != null ? sql`AND fr.session_id = ${sessionId}` : sql``;
     const outstandingRow = await db.execute(sql`
-      SELECT COALESCE(SUM(GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)), 0)::int AS outstanding
+      SELECT COALESCE(SUM(GREATEST(
+        fr.amount - COALESCE(p.total_paid, 0) + COALESCE(rf.total_refunded, 0),
+        0
+      )), 0)::int AS outstanding
       FROM fee_records fr
       LEFT JOIN (
         SELECT fee_record_id, SUM(amount)::int AS total_paid
@@ -10701,6 +10704,13 @@ export class DatabaseStorage {
         WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
+      LEFT JOIN (
+        SELECT fee_record_id,
+               SUM(COALESCE(processed_amount_paise, requested_amount_paise)) / 100.0 AS total_refunded
+        FROM refunds
+        WHERE school_id = ${schoolId} AND local_status = 'processed' AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) rf ON rf.fee_record_id = fr.id
       WHERE fr.school_id = ${schoolId}
         AND fr.status IN ('Due', 'Overdue')
       ${sessionCond}

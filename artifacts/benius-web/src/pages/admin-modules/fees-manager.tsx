@@ -6758,9 +6758,11 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     if (preset === "custom") { if (startDate) p.set("startDate", startDate); if (endDate) p.set("endDate", endDate); }
     return p.toString();
   }, [preset, startDate, endDate]);
+  const currentSessionRef = useRef(viewSessionId);
+  currentSessionRef.current = viewSessionId;
   const { data, isLoading, isFetching, error, refetch } = useQuery<AnalyticsData>({
     queryKey: ["/api/fees/analytics", viewSessionId, preset, startDate, endDate],
-    queryFn: async () => { const r = await sessionFetch(`/api/fees/analytics?${params}`); const body = await r.json().catch(() => null); if (!r.ok) throw new Error(body?.message ?? body?.error ?? "Analytics request failed"); return body; },
+    queryFn: async ({ signal }) => { const r = await sessionFetchForViewSession(`/api/fees/analytics?${params}`, viewSessionId, { signal }); const body = await r.json().catch(() => null); if (!r.ok) throw new Error(body?.message ?? body?.error ?? "Analytics request failed"); return body; },
     enabled: preset !== "custom" || (!!startDate && !!endDate && startDate <= endDate),
     staleTime: 0, refetchOnMount: "always",
   });
@@ -6769,11 +6771,21 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const paymentChannelSplit = data?.paymentChannelSplit;
   const agingData = useMemo(() => AGING_BUCKETS.map(b => ({ ...b, ...(data?.aging?.find(a => a.bucket === b.key) ?? { count: 0, amount: 0 }) })), [data]);
   const downloadPdf = async (section: string) => {
+    const requestedSessionId = viewSessionId;
+    if (requestedSessionId == null) {
+      toast({ title: "Download failed", description: "Select an Academic Session first.", variant: "destructive" });
+      return;
+    }
     setExporting(section);
     try {
-      const r = await sessionFetch(`/api/fees/analytics/pdf?${params}&section=${section}`);
+      const r = await sessionFetchForViewSession(`/api/fees/analytics/pdf?${params}&section=${section}`, requestedSessionId);
       if (!r.ok) { const body = await r.json().catch(() => ({})); throw new Error(body.message ?? body.error ?? "PDF unavailable"); }
-      const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `financial-analytics-${preset}-${section}-${todayInIST()}.pdf`; a.style.display = "none"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const blob = await r.blob();
+      if (currentSessionRef.current !== requestedSessionId) {
+        toast({ title: "Session changed", description: "The export was not downloaded. Retry from the selected Academic Session.", variant: "destructive" });
+        return;
+      }
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `financial-analytics-session-${requestedSessionId}-${preset}-${section}-${todayInIST()}.pdf`; a.style.display = "none"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { toast({ title: "Download failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setExporting(null); }
   };
   const DownloadButton = ({ section = "summary" }: { section?: string }) => <button type="button" onClick={() => downloadPdf(section)} disabled={!!exporting} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-cyan-300/70 hover:bg-cyan-300/10 hover:text-cyan-200 disabled:opacity-40" aria-label={`Download ${section} PDF`}><Download className="h-3 w-3" />{exporting === section ? "Preparing" : "PDF"}</button>;
@@ -7151,14 +7163,15 @@ function AgingDefaultersDrawer({
     setFilterFeeType("__all__");
   }, [bucket?.key]);
 
+  const sessionId = selectedSession?.id ?? null;
   const { data: students = [], isLoading } = useQuery<AgingStudent[]>({
-    queryKey: ["/api/fees/analytics/aging-students", selectedSession?.id ?? "unselected", bucket?.key, startDate, endDate],
-    queryFn: async () => {
+    queryKey: ["/api/fees/analytics/aging-students", sessionId ?? "unselected", bucket?.key, startDate, endDate],
+    queryFn: async ({ signal }) => {
       if (!bucket) return [];
       const params = new URLSearchParams({ bucket: bucket.key });
       if (startDate) params.set("startDate", startDate);
       if (endDate) params.set("endDate", endDate);
-      const r = await sessionFetch(`/api/fees/analytics/aging-students?${params.toString()}`);
+      const r = await sessionFetchForViewSession(`/api/fees/analytics/aging-students?${params.toString()}`, sessionId, { signal });
       if (!r.ok) throw new Error("Failed to load defaulters");
       return r.json();
     },

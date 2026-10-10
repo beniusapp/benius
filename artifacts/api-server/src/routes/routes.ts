@@ -107,6 +107,7 @@ import {
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "../sse";
 import { db } from "../db";
 import { eq, and, sql, inArray, not, desc } from "drizzle-orm";
+import { studentOpenFeeDisplayBalance } from "../financial-reporting-balance";
 import { randomBytes } from "node:crypto";
 import {
   generatePasswordRecoveryOtp,
@@ -5429,12 +5430,52 @@ export async function registerRoutes(
     }
 
     const now = new Date();
+    const financialRows = await db.execute(sql`
+      SELECT fr.id AS fee_record_id,
+             COALESCE(p.total_paid, 0) AS total_paid,
+             COALESCE(rf.total_refunded, 0) AS total_refunded
+      FROM fee_records fr
+      LEFT JOIN (
+        SELECT fee_record_id, SUM(amount) AS total_paid
+        FROM payment_records
+        WHERE school_id = ${student.schoolId} AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) p ON p.fee_record_id = fr.id
+      LEFT JOIN (
+        SELECT fee_record_id,
+               SUM(COALESCE(processed_amount_paise, requested_amount_paise)) / 100.0 AS total_refunded
+        FROM refunds
+        WHERE school_id = ${student.schoolId}
+          AND local_status = 'processed'
+          AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) rf ON rf.fee_record_id = fr.id
+      WHERE fr.school_id = ${student.schoolId}
+        AND fr.student_id = ${req.session.studentId}
+        AND fr.session_id = ${viewSessionId}
+    `);
+    const financialByFeeId = new Map<number, { paid: number; refunded: number }>(
+      financialRows.rows.map((row: any) => [
+        Number(row.fee_record_id),
+        { paid: Number(row.total_paid) || 0, refunded: Number(row.total_refunded) || 0 },
+      ]),
+    );
+
     const enriched = records.map(r => {
       const cfg = (r.lateFeeConfig as any) ?? ftToConfig.get(r.feeType.trim().toLowerCase());
       const accrued_late_fee = cfg?.enabled
         ? calculateLateFee(cfg, r.dueDate, r.status, now)
         : ((r as any).lateFeeAmount ?? 0);
       const failedInfo = failedMap.get(r.id);
+      const financial = financialByFeeId.get(r.id) ?? { paid: 0, refunded: 0 };
+      const totalDue = r.amount + accrued_late_fee;
+      // Preserve the existing no-refund card total. When a processed refund
+      // exists, show the established retained-payment balance instead.
+      const refundAdjustedTotalDue = studentOpenFeeDisplayBalance(
+        totalDue,
+        financial.paid,
+        financial.refunded,
+      );
       // Compute immutable fee-period display label from stored period dates.
       // Falls back to academicYear for pre-migration records that have no period.
       const periodLabel = feePeriodLabel(
@@ -5449,7 +5490,9 @@ export async function registerRoutes(
         breakdown:         (r.breakdownSnapshot?.length ? r.breakdownSnapshot : breakdownMap.get(r.feeType.trim().toLowerCase())) ?? [],
         base_amount:       r.amount,
         accrued_late_fee,
-        total_due:         r.amount + accrued_late_fee,
+        total_due:         totalDue,
+        refund_adjusted_total_due: refundAdjustedTotalDue,
+        processed_refund_amount: financial.refunded,
         failed_count:      failedInfo?.count ?? 0,
         last_failed_error: failedInfo?.lastError ?? null,
         // Display-oriented late-fee transparency object — built from the same cfg
@@ -5499,7 +5542,12 @@ export async function registerRoutes(
         fr.due_date,
         fr.status,
         COALESCE(p.total_paid, 0)::int AS amount_paid,
-        GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0)::int AS net_balance
+        GREATEST(
+          fr.amount + fr.late_fee_amount
+            - COALESCE(p.total_paid, 0)
+            + COALESCE(rf.total_refunded, 0),
+          0
+        ) AS net_balance
       FROM fee_records fr
       LEFT JOIN (
         SELECT fee_record_id, SUM(amount)::int AS total_paid
@@ -5507,9 +5555,21 @@ export async function registerRoutes(
         WHERE school_id = ${student.schoolId} AND fee_record_id IS NOT NULL
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
+      LEFT JOIN (
+        SELECT fee_record_id,
+               SUM(COALESCE(processed_amount_paise, requested_amount_paise)) / 100.0 AS total_refunded
+        FROM refunds
+        WHERE school_id = ${student.schoolId}
+          AND local_status = 'processed'
+          AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) rf ON rf.fee_record_id = fr.id
       WHERE fr.student_id = ${req.session.studentId}
         AND fr.school_id  = ${student.schoolId}
-        AND fr.status IN ('Due', 'Overdue')
+        AND (
+          fr.status IN ('Due', 'Overdue')
+          OR COALESCE(rf.total_refunded, 0) > 0
+        )
       ${sessionCond}
     `);
 
