@@ -78,6 +78,10 @@ import { resolveStudentAcademicSession } from "../student-academic-session";
 import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
 import {
+  exceedsStudentWordLimit,
+  STUDENT_UPLOAD_MAX_BYTES,
+} from "../student-field-limits";
+import {
   getStudentComplaintReadIds,
   markStudentComplaintRead,
   studentComplaintReadReceiptsEnabled,
@@ -2405,7 +2409,7 @@ export async function registerRoutes(
           cb(null, unique + path.extname(file.originalname).toLowerCase());
         },
       }),
-      limits: { fileSize: 10 * 1024 * 1024 },
+      limits: { fileSize: STUDENT_UPLOAD_MAX_BYTES },
       fileFilter: (_req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
         if (ALLOWED_SUBMISSION_MIMES.has(file.mimetype) && ALLOWED_SUBMISSION_EXTS.has(ext)) {
@@ -2430,7 +2434,13 @@ export async function registerRoutes(
       next();
     }, (req, res, next) => {
       homeworkSubmissionUpload.single("file")(req, res, (err) => {
-        if (err) return res.status(400).json({ message: err.message || "File upload failed" });
+        if (err) {
+          const tooLarge = err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE";
+          res.status(400).json({
+            message: tooLarge ? "Homework file must be 1 MB or smaller." : err.message || "File upload failed",
+          });
+          return;
+        }
         next();
       });
     }, async (req, res) => {
@@ -2749,11 +2759,22 @@ export async function registerRoutes(
   // Memory-storage multer — avoids diskStorage callback complexity that prevented req.body from being populated
   const leaveMemUpload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: STUDENT_UPLOAD_MAX_BYTES },
   });
 
   // Single atomic endpoint: fields + optional file arrive together, file written to disk from buffer
-  app.post("/api/student/leave", leaveMemUpload.single("file"), async (req, res) => {
+  app.post("/api/student/leave", (req, res, next) => {
+    leaveMemUpload.single("file")(req, res, (error) => {
+      if (error) {
+        const tooLarge = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE";
+        res.status(400).json({
+          message: tooLarge ? "Leave attachment must be 1 MB or smaller." : error.message || "File upload failed",
+        });
+        return;
+      }
+      next();
+    });
+  }, async (req, res) => {
     const context = await resolveStudentAcademicSession(
       req.session.studentId, req.headers["x-view-session-id"], "CURRENT_SESSION_WRITE", storage,
     );
@@ -2764,8 +2785,11 @@ export async function registerRoutes(
     const reason     = req.body?.reason;
     const category   = req.body?.category;
 
-    if (!startDate || !endDate || !reason) {
+    if (!startDate || !endDate || typeof reason !== "string" || !reason.trim()) {
       return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+    }
+    if (exceedsStudentWordLimit(reason)) {
+      return res.status(400).json({ message: "Leave reason cannot exceed 500 words." });
     }
 
     // Save uploaded file buffer to disk (if any)
@@ -3005,8 +3029,14 @@ export async function registerRoutes(
     );
     if (!context.ok) return res.status(context.status).json({ message: context.message });
     const { teacherId, content, contactNumber, suggestions } = req.body ?? {};
-    if (!teacherId || !content?.trim()) {
+    if (!teacherId || typeof content !== "string" || !content.trim()) {
       return res.status(400).json({ message: "Teacher and complaint description are required" });
+    }
+    if (exceedsStudentWordLimit(content)) {
+      return res.status(400).json({ message: "Complaint description cannot exceed 500 words." });
+    }
+    if (typeof suggestions === "string" && exceedsStudentWordLimit(suggestions)) {
+      return res.status(400).json({ message: "Suggestions for improvement cannot exceed 500 words." });
     }
     const targetTeacher = await storage.getTeacherById(parseInt(teacherId));
     if (!targetTeacher || targetTeacher.schoolId !== context.schoolId) {
@@ -3049,8 +3079,12 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Historical academic sessions are read-only" });
     }
     const { reportedStudentName, reportedStudentId, incidentDate, content } = req.body ?? {};
-    if (!reportedStudentName?.trim() || !content?.trim()) {
+    if (typeof reportedStudentName !== "string" || !reportedStudentName.trim() ||
+      typeof content !== "string" || !content.trim()) {
       return res.status(400).json({ message: "Reported student name and description are required" });
+    }
+    if (exceedsStudentWordLimit(content)) {
+      return res.status(400).json({ message: "Incident description cannot exceed 500 words." });
     }
     let targetId: number | null = null;
     if (reportedStudentId !== undefined && reportedStudentId !== null && reportedStudentId !== "") {

@@ -11,6 +11,7 @@ import { getQueryFn, sessionFetchForViewSession, queryClient } from "@/lib/query
 import { studentLeaveQueryKey } from "@/lib/student-leave-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
+import { countStudentWords, exceedsStudentUploadLimit, exceedsStudentWordLimit, STUDENT_FIELD_MAX_WORDS, STUDENT_UPLOAD_MAX_BYTES } from "@/lib/student-field-limits";
 
 interface StudentMe {
   id: number;
@@ -68,6 +69,18 @@ export default function StudentLeave() {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const reasonWords = countStudentWords(reason);
+  const reasonWordsExceeded = exceedsStudentWordLimit(reason);
+
+  function handleAttachmentSelect(file: File | null, input?: HTMLInputElement) {
+    if (file && exceedsStudentUploadLimit(file)) {
+      setAttachmentFile(null);
+      if (input) input.value = "";
+      toast({ title: "File too large", description: "Leave attachments must be 1 MB or smaller.", variant: "destructive" });
+      return;
+    }
+    setAttachmentFile(file);
+  }
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
@@ -153,7 +166,7 @@ export default function StudentLeave() {
   const approvedCount = leaves.filter(l => l.status === "approved").length;
   const rejectedCount = leaves.filter(l => l.status === "rejected").length;
 
-  const canSubmit = startDate && endDate && reason.trim() && startDate <= endDate;
+  const canSubmit = startDate && endDate && reason.trim() && !reasonWordsExceeded && startDate <= endDate;
 
   if (studentLoading || !student) {
     return (
@@ -451,6 +464,10 @@ export default function StudentLeave() {
                   className="w-full px-3 py-2.5 rounded-xl border border-emerald-100 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent resize-none"
                   data-testid="textarea-leave-reason"
                 />
+                <p aria-live="polite" className={`mt-1 text-right text-xs ${reasonWordsExceeded ? "text-red-600" : "text-gray-400"}`} data-testid="counter-leave-reason">
+                  {reasonWords}/{STUDENT_FIELD_MAX_WORDS} words
+                </p>
+                {reasonWordsExceeded && <p role="alert" className="mt-1 text-xs text-red-600">Leave reason cannot exceed 500 words.</p>}
               </div>
 
               {/* Attachment upload */}
@@ -477,12 +494,13 @@ export default function StudentLeave() {
                   >
                     <Upload className="w-6 h-6 text-gray-400" />
                     <span className="text-sm font-medium text-gray-600">Click to upload image or document</span>
-                    <span className="text-xs text-gray-400">JPG, PNG, PDF, DOC (Max 10MB)</span>
+                    <span className="text-xs text-gray-400">JPG, PNG, PDF, DOC (Max 1 MB)</span>
                     <input
                       type="file"
                       accept="image/*,.pdf,.doc,.docx"
                       className="hidden"
-                      onChange={e => setAttachmentFile(e.target.files?.[0] ?? null)}
+                      onChange={e => handleAttachmentSelect(e.target.files?.[0] ?? null, e.currentTarget)}
+                      data-max-bytes={STUDENT_UPLOAD_MAX_BYTES}
                       data-testid="input-leave-attachment"
                     />
                   </label>

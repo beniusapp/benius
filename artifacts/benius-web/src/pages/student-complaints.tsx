@@ -16,6 +16,7 @@ import {
   studentComplaintReplyUnreadCountQueryKey,
 } from "@/lib/student-complaint-query-keys";
 import { teacherComplaintBadgeCount } from "@/lib/student-complaint-unread";
+import { countStudentWords, exceedsStudentWordLimit, STUDENT_FIELD_MAX_WORDS } from "@/lib/student-field-limits";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
@@ -686,6 +687,12 @@ export default function StudentComplaints() {
   const [peerIncidentDate, setPeerIncidentDate] = useState("");
   const [peerIncidentDateText, setPeerIncidentDateText] = useState("");
   const [peerContent, setPeerContent] = useState("");
+  const staffContentWords = countStudentWords(staffContent);
+  const staffSuggestionsWords = countStudentWords(staffSuggestions);
+  const peerContentWords = countStudentWords(peerContent);
+  const staffWordsExceeded = exceedsStudentWordLimit(staffContent);
+  const staffSuggestionsExceeded = exceedsStudentWordLimit(staffSuggestions);
+  const peerWordsExceeded = exceedsStudentWordLimit(peerContent);
 
   useEffect(() => {
     setSelectedInboxItem(null);
@@ -862,6 +869,10 @@ export default function StudentComplaints() {
       toast({ title: "Missing fields", description: "Please select a teacher and describe your complaint.", variant: "destructive" });
       return;
     }
+    if (staffWordsExceeded || staffSuggestionsExceeded) {
+      toast({ title: "Text is too long", description: "Each staff grievance text field must be 500 words or fewer.", variant: "destructive" });
+      return;
+    }
     staffMutation.mutate({
       sessionId,
       data: {
@@ -881,6 +892,10 @@ export default function StudentComplaints() {
     }
     if (!peerSelectedStudent || !peerContent.trim()) {
       toast({ title: "Missing fields", description: "Please select a student and describe the incident.", variant: "destructive" });
+      return;
+    }
+    if (peerWordsExceeded) {
+      toast({ title: "Description is too long", description: "The incident description must be 500 words or fewer.", variant: "destructive" });
       return;
     }
     peerMutation.mutate({
@@ -1072,6 +1087,10 @@ export default function StudentComplaints() {
                     data-testid="textarea-staff-content"
                     required
                   />
+                  <p aria-live="polite" className={`mt-1 text-right text-xs ${staffWordsExceeded ? "text-red-600" : "text-gray-400"}`} data-testid="counter-staff-content">
+                    {staffContentWords}/{STUDENT_FIELD_MAX_WORDS} words
+                  </p>
+                  {staffWordsExceeded && <p role="alert" className="mt-1 text-xs text-red-600">Complaint description cannot exceed 500 words.</p>}
                 </div>
 
                 <div>
@@ -1096,11 +1115,15 @@ export default function StudentComplaints() {
                     placeholder="Any suggestions to prevent this in future…"
                     data-testid="textarea-staff-suggestions"
                   />
+                  <p aria-live="polite" className={`mt-1 text-right text-xs ${staffSuggestionsExceeded ? "text-red-600" : "text-gray-400"}`} data-testid="counter-staff-suggestions">
+                    {staffSuggestionsWords}/{STUDENT_FIELD_MAX_WORDS} words
+                  </p>
+                  {staffSuggestionsExceeded && <p role="alert" className="mt-1 text-xs text-red-600">Suggestions for improvement cannot exceed 500 words.</p>}
                 </div>
 
                 <button
                   type="submit"
-                  disabled={staffMutation.isPending || teachersLoading}
+                  disabled={staffMutation.isPending || teachersLoading || staffWordsExceeded || staffSuggestionsExceeded}
                   className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-[#10b981] hover:bg-[#059669] text-white text-sm font-semibold transition-colors disabled:opacity-60"
                   data-testid="button-submit-staff"
                 >
@@ -1196,11 +1219,15 @@ export default function StudentComplaints() {
                     data-testid="textarea-peer-content"
                     required
                   />
+                  <p aria-live="polite" className={`mt-1 text-right text-xs ${peerWordsExceeded ? "text-red-600" : "text-gray-400"}`} data-testid="counter-peer-content">
+                    {peerContentWords}/{STUDENT_FIELD_MAX_WORDS} words
+                  </p>
+                  {peerWordsExceeded && <p role="alert" className="mt-1 text-xs text-red-600">Incident description cannot exceed 500 words.</p>}
                 </div>
 
                 <button
                   type="submit"
-                  disabled={peerMutation.isPending || !peerSelectedStudent}
+                  disabled={peerMutation.isPending || !peerSelectedStudent || peerWordsExceeded}
                   className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-[#10b981] hover:bg-[#059669] text-white text-sm font-semibold transition-colors disabled:opacity-60"
                   data-testid="button-submit-peer"
                 >

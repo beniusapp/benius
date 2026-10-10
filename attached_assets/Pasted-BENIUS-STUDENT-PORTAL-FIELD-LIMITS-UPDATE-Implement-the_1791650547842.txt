@@ -1,0 +1,101 @@
+BENIUS — STUDENT PORTAL FIELD LIMITS UPDATE
+
+Implement the following changes directly in the existing BENIUS Student Portal.
+
+SCOPE: Only the four specified Student Portal areas.
+
+1. HOMEWORK — /student/homework
+
+Under Submit Homework → Upload File:
+
+- Change the maximum file upload size from 10 MB to 1 MB.
+- Update the visible label to "Max 1 MB".
+- Reject files larger than 1 MB with a clear error message.
+- Preserve existing supported file types and submission functionality.
+- Do not change the Write Answer field's existing limit.
+
+2. COMPLAINTS — STAFF GRIEVANCE
+
+Under /student/complaints → Staff Grievance:
+
+Apply a maximum of 500 WORDS independently to:
+
+- Complaint Description
+- Suggestions for Improvement
+
+Requirements:
+- Show a live word counter below each field.
+- Counter format: 0/500, 1/500, etc.
+- Count words, NOT characters.
+- Each field must have its own counter.
+- Prevent submission when a field exceeds 500 words.
+- Display a clear validation message.
+- Preserve existing required/optional field rules.
+
+3. COMPLAINTS — PEER REPORTS
+
+Under /student/complaints → Peer Reports:
+
+For Description of Incident:
+
+- Maximum 500 words.
+- Show a live 0/500 word counter.
+- Prevent submission above 500 words.
+- Preserve existing student search, incident date/time and submission behavior.
+
+4. LEAVE APPLICATION — /student/leave
+
+For Reason:
+- Maximum 500 words.
+- Show a live 0/500 word counter.
+- Prevent submission above 500 words.
+
+For Attachment:
+- Maximum 1 MB.
+- Update the visible label from "Max 10MB" to "Max 1 MB".
+- Reject larger attachments with a clear error.
+- Preserve supported attachment formats.
+
+5. VALIDATION REQUIREMENTS
+
+- Use 1 MB = 1,048,576 bytes.
+- Count words consistently using trimmed whitespace-separated text.
+- Empty text = 0 words.
+- Validate on the frontend and the relevant backend submission/upload endpoints.
+- Ensure pasted text cannot bypass the 500-word limit.
+- Ensure direct API requests cannot bypass the new limits.
+- Apply these limits only to the specified fields and uploads.
+- Do not change unrelated attachment limits or text fields.
+
+6. SAFETY
+
+- Preserve authenticated school/tenant isolation.
+- Preserve Academic Session ID scoping where applicable.
+- Do not modify existing submitted homework, complaints or leave records.
+- Do not modify database schema or execute migrations.
+- Do not touch Production or Mobile.
+- Do not deploy or restart services.
+- Do not change unrelated modules or calculations.
+
+7. VERIFICATION
+
+Test:
+- Exactly 500 words accepted.
+- 501 words rejected.
+- Word counters update while typing, deleting and pasting.
+- Exactly 1 MB file accepted.
+- File larger than 1 MB rejected.
+- Existing required-field validation still works.
+- Existing valid submissions remain functional.
+
+Run focused tests and relevant API/Web builds.
+
+Implement these changes without another broad architecture audit.
+
+Report:
+1. Files changed.
+2. Tests passed/failed.
+3. Backend enforcement confirmed.
+4. Any remaining issues.
+
+STOP after implementation and testing. Wait for approval before restarting or deploying.
