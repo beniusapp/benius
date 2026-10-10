@@ -1,0 +1,76 @@
+BENIUS — URGENT INVESTIGATION: PRINCIPAL LOGIN SECURITY RESTRICTION
+
+MODE: STRICTLY READ-ONLY. DO NOT MODIFY ANYTHING.
+
+ISSUE:
+
+The Principal Login page at /login suddenly displays:
+
+"Security Restriction: Write operations are strictly blocked for archived school years."
+
+This warning appears before Principal authentication.
+
+This started appearing unexpectedly after recent Development work.
+
+OBJECTIVE:
+
+Identify the exact root cause without weakening Academic Session security or modifying application behavior.
+
+INVESTIGATE:
+
+1. Locate the exact warning message in the codebase.
+
+2. Identify the frontend component and backend response responsible for displaying it.
+
+3. Trace the Principal Login flow:
+   - Initial page load
+   - Login submission
+   - Authentication API
+   - Session initialization
+   - Academic Session selection
+   - Admin PIN verification, where applicable
+
+4. Determine whether the warning is:
+   - A frontend display bug
+   - A backend authentication failure
+   - An archived Academic Session write restriction
+   - A stale browser/session state issue
+   - A regression caused by recent Development changes
+
+5. Verify whether login itself is being blocked or only the warning is displayed.
+
+6. Inspect the authenticated school's Academic Session selection logic.
+
+7. Verify that:
+   - Archived sessions remain read-only.
+   - Active sessions permit authorized operations.
+   - Authentication does not incorrectly depend on a stale selected Academic Session.
+   - School/tenant isolation remains intact.
+
+8. Inspect recent relevant code changes and Development logs for evidence of the regression.
+
+9. If the Development database needs inspection, use only read-only queries after positively verifying the database identity.
+
+IMPORTANT SAFETY RULES:
+
+- DO NOT modify code.
+- DO NOT execute database writes.
+- DO NOT run migrations.
+- DO NOT change Academic Session statuses.
+- DO NOT disable archived-session protection.
+- DO NOT reset passwords or authentication sessions.
+- DO NOT change environment variables.
+- DO NOT restart services.
+- DO NOT deploy or publish.
+- DO NOT touch Production or Mobile.
+
+FINAL REPORT — KEEP IT CONCISE:
+
+1. Exact root cause with file and line references.
+2. Whether Principal Login is actually blocked.
+3. Whether the active Academic Session is being misidentified.
+4. Whether recent changes caused the issue.
+5. Minimum safe fix required.
+6. Files that would need modification.
+
+STOP after investigation. Wait for my approval before implementing any fix.
