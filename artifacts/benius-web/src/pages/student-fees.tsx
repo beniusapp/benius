@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { getQueryFn, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
-import { isRefundedPaidInvoiceWithBalance } from "@/lib/student-fees-display";
+import { canShowStudentPayNow, isRefundedPaidInvoiceWithBalance, paymentAttemptPlacementRows } from "@/lib/student-fees-display";
 import { useSessionView } from "@/contexts/session-view-context";
 import {
   classifyStudentPaymentAttempt,
@@ -581,10 +581,7 @@ function downloadPaymentPDF(
     y += Math.max(wrapped.length * 5, 6);
   };
   sectionHeader("ACADEMIC SESSION & HISTORICAL PLACEMENT");
-  row("Academic Session", attempt.academicSessionLabel ?? "Historical session unavailable");
-  row("Class", attempt.historicalPlacementAvailable ? attempt.className ?? "—" : "Historical placement unavailable");
-  row("Section", attempt.historicalPlacementAvailable ? attempt.sectionName ?? "—" : "—");
-  row("Roll Number", attempt.historicalPlacementAvailable && attempt.rollNumber != null ? String(attempt.rollNumber) : "—");
+  for (const [label, value] of paymentAttemptPlacementRows(attempt)) row(label, value);
   y += 2;
   const outcomeMap: Record<string, string> = {
     captured: "Captured", failed: "Failed", cancelled: "Cancelled",
@@ -1990,7 +1987,9 @@ export default function StudentFees() {
                                 <p className="text-2xl font-black text-slate-800"
                                   style={{ fontVariantNumeric: "tabular-nums" }}
                                   data-testid={`text-fee-amount-${rec.id}`}>
-                                  {(rec as any).accrued_late_fee > 0
+                                  {isRefundedBalance(rec)
+                                    ? formatAmount(Number((rec as any).refund_adjusted_total_due))
+                                    : (rec as any).accrued_late_fee > 0
                                     ? formatAmount(rec.amount + (rec as any).accrued_late_fee)
                                     : formatAmount(rec.amount)}
                                 </p>
@@ -2016,7 +2015,7 @@ export default function StudentFees() {
                                 </button>
                               )}
                               {/* Razorpay Pay Now / Try Again — shown only when toggle is ON and live keys are saved */}
-                              {razorpayActive && !isRefundedBalance(rec) && (() => {
+                              {canShowStudentPayNow(rec as any, razorpayActive) && (() => {
                                 const hasFailed = (rec.failed_count ?? 0) > 0;
                                 const isProcessing = payingFeeId === rec.id;
                                 return (

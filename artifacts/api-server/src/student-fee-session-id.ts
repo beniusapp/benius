@@ -15,3 +15,19 @@ export function parseStudentFeeSessionHeader(
   }
   return { ok: true, sessionId };
 }
+
+export function isStudentFeeRecordOwnedBySelectedSession(
+  record: {
+    id: number;
+    studentId: number;
+    schoolId: number;
+    sessionId: number | string | null;
+  },
+  expected: { feeRecordId: number; studentId: number; schoolId: number; sessionId: number },
+): boolean {
+  return record.id === expected.feeRecordId
+    && record.studentId === expected.studentId
+    && record.schoolId === expected.schoolId
+    && record.sessionId != null
+    && Number(record.sessionId) === expected.sessionId;
+}

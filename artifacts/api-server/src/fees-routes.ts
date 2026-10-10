@@ -6804,7 +6804,6 @@ export function registerFeesRoutes(app: Express) {
         studentId: student.id,
         sessionId: viewSessionId,
       });
-      const displayPlacement = feePlacementForDisplay(placement);
       res.json(attachStatementSessionPlacement(
         rows.rows as any[],
         viewSessionId!,

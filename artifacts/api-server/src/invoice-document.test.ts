@@ -23,5 +23,6 @@ test("invoice keeps the stored late-fee snapshot while showing current accrued a
   assert.match(html, /Invoice amount \(snapshot\)/);
   assert.match(html, /Current accrued late fee/);
   assert.match(html, /Current amount due/);
-  assert.match(html, /INR&nbsp;|INR/);
+  assert.match(html, /₹110/);
+  assert.match(html, /₹125/);
 });

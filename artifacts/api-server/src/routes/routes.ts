@@ -100,6 +100,7 @@ import {
   prepareManualInvoiceContext,
 } from "../structure-invoice-service";
 import { renderInvoiceDocument } from "../invoice-document";
+import { isStudentFeeRecordOwnedBySelectedSession } from "../student-fee-session-id";
 import {
   manualInvoiceBodySchema,
   manualInvoiceStudentValidationMessage,
@@ -5632,7 +5633,12 @@ export async function registerRoutes(
     // id from a different student will simply not be found.
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
-    const owned = records.find(r => r.id === id);
+    const owned = records.find(r => isStudentFeeRecordOwnedBySelectedSession(r, {
+      feeRecordId: id,
+      studentId: req.session.studentId!,
+      schoolId: student.schoolId,
+      sessionId: viewSessionId!,
+    }));
     if (!owned) return res.status(404).json({ message: "Invoice not found" });
     if (owned.status === "Paid") {
       return res.status(409).type("html").send(
@@ -5766,7 +5772,12 @@ export async function registerRoutes(
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
-    const rec = records.find(r => r.id === id);
+    const rec = records.find(r => isStudentFeeRecordOwnedBySelectedSession(r, {
+      feeRecordId: id,
+      studentId: req.session.studentId!,
+      schoolId: student.schoolId,
+      sessionId: viewSessionId!,
+    }));
     if (!rec) return res.status(404).json({ message: "Fee record not found" });
     if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
     const placementDisplay = feePlacementForDisplay(
